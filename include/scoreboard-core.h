@@ -266,6 +266,61 @@ void scoreboard_format_strength(char *buf, size_t size);
 void scoreboard_preview_strength_label(const char *fmt, char *buf,
 				       size_t size);
 
+/* Player roster and plus/minus (+/-)
+ *
+ * Each team has a roster of up to SCOREBOARD_MAX_ROSTER players, identified
+ * by jersey number. Players marked "on ice" are credited when a goal is
+ * scored: the scoring team's on-ice players get +1 and the other team's
+ * on-ice players get -1. Power-play goals are skipped by default.
+ * `home` selects the team (true = home, false = away). */
+#define SCOREBOARD_MAX_ROSTER 30
+#define SCOREBOARD_MAX_PLAYER_NUMBER 999
+
+struct scoreboard_player {
+	int number;
+	bool on_ice;
+	int plus_minus;
+};
+
+/* Returns the roster slot, or -1 if the number is out of range or the roster
+ * is full. Adding a number already on the roster returns its existing slot. */
+int scoreboard_roster_add(bool home, int number);
+bool scoreboard_roster_remove(bool home, int number);
+void scoreboard_roster_clear(bool home);
+int scoreboard_roster_count(bool home);
+/* Players are listed in the order they were added; NULL if index is out of range. */
+const struct scoreboard_player *scoreboard_roster_get(bool home, int index);
+bool scoreboard_roster_find(bool home, int number);
+
+bool scoreboard_player_set_on_ice(bool home, int number, bool on_ice);
+bool scoreboard_player_toggle_on_ice(bool home, int number);
+void scoreboard_roster_clear_on_ice(bool home);
+int scoreboard_roster_on_ice_count(bool home);
+
+/* Manual correction. Returns false if the player is not on the roster. */
+bool scoreboard_player_adjust_plus_minus(bool home, int number, int delta);
+/* Returns 0 if the player is not on the roster. */
+int scoreboard_player_get_plus_minus(bool home, int number);
+void scoreboard_roster_reset_plus_minus(bool home);
+
+/* When true (default), goals scored while the scoring team has more players
+ * on the ice than the opponent (power play) do not change plus/minus. */
+void scoreboard_set_plus_minus_skip_power_play(bool skip);
+bool scoreboard_get_plus_minus_skip_power_play(void);
+
+/* Compact text form of a roster ("number:on_ice:plus_minus,...") so a front
+ * end can keep it across restarts. from_string replaces the roster; entries
+ * that cannot be read are skipped. */
+void scoreboard_roster_to_string(bool home, char *buf, size_t size);
+void scoreboard_roster_from_string(bool home, const char *text);
+
+/* "+2", "-1" or "0" */
+void scoreboard_format_plus_minus(int value, char *buf, size_t size);
+/* One "#12  +2" line per roster player (all=true) or per on-ice player
+ * (all=false), separated by newlines. */
+void scoreboard_format_plus_minus_lines(bool home, bool all, char *buf,
+					size_t size);
+
 /* Action log */
 void scoreboard_add_action_log(const char *message);
 size_t scoreboard_copy_action_logs(char *buffer, size_t buffer_size);
