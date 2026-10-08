@@ -183,11 +183,10 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Qt5
+      - name: Install Qt 6.8.3
         uses: jurplel/install-qt-action@v4
         with:
-          version: '5.15.2'
-          arch: 'win64_msvc2019_64'
+          version: '6.8.3'
 
       - name: Clone OBS source (headers only)
         run: |
@@ -247,11 +246,21 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
 
+      - name: Stage plugin folder
+        shell: pwsh
+        run: |
+          $binDir = "pkg-root/streamn-obs-scoreboard/bin/64bit"
+          $dataDir = "pkg-root/streamn-obs-scoreboard/data"
+          New-Item -ItemType Directory -Force -Path $binDir
+          New-Item -ItemType Directory -Force -Path $dataDir
+          Copy-Item "build/RelWithDebInfo/streamn-obs-scoreboard.dll" $binDir
+          Copy-Item "build/data/manifest.json" $dataDir
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: plugin-windows
-          path: build/RelWithDebInfo/streamn-obs-scoreboard.dll
+          path: pkg-root
 
   coverage:
     name: Coverage
