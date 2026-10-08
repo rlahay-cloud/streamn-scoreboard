@@ -8,6 +8,9 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 - Player plus/minus (+/-) tracking for hockey. Add each team's roster by jersey number, tap players on and off the ice in the dock, and every goal credits +1 to the scoring team's on-ice players and -1 to the other team's on-ice players. Taking a goal back (the score "-" button) reverses its +/- changes.
 - Power-play goals are skipped by default, based on the existing penalty strength tracking. Turn this off from the Roster menu if your league counts them.
 - Four new text files for overlays: `home_plus_minus.txt` and `away_plus_minus.txt` (whole roster, one `#12  +2` line per player) and `home_on_ice.txt` and `away_on_ice.txt` (only the players currently on the ice).
+- Type in exact numbers for a player: right-click a player and choose Edit to set +/-, goals and assists directly.
+- Goals and assists per player. After a goal, a small window asks who scored and who assisted (Skip leaves it blank, and it can be turned off in the Roster menu). Taking the goal back removes its credit. Player buttons show goals and assists, and the Roster menu can credit the last goal later or reset the totals.
+- Three new text files for overlays: `home_scoring.txt` and `away_scoring.txt` (one `#12  1G 2A` line per player with a goal or assist) and `last_goal.txt` (who scored the latest credited goal and who assisted).
 - Rosters, on-ice status and +/- totals are kept across OBS restarts. Starting a New Game clears the +/- totals and the ice but keeps the rosters.
 
 ## [0.8.0] - 2026-04-17

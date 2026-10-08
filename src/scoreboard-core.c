@@ -19,6 +19,9 @@
    reversed. Players are recorded by jersey number. */
 struct pm_event {
 	bool home_scored;
+	int scorer;  /* credited jersey numbers, -1 when nobody */
+	int assist1;
+	int assist2;
 	int plus_count;
 	int plus_numbers[SCOREBOARD_MAX_ROSTER];
 	int minus_count;
@@ -487,6 +490,8 @@ int scoreboard_roster_add(bool home, int number)
 	p->number = number;
 	p->on_ice = false;
 	p->plus_minus = 0;
+	p->goals = 0;
+	p->assists = 0;
 	mark_dirty();
 	return (*count)++;
 }
@@ -596,6 +601,67 @@ void scoreboard_roster_reset_plus_minus(bool home)
 	mark_dirty();
 }
 
+bool scoreboard_player_set_plus_minus(bool home, int number, int value)
+{
+	struct scoreboard_player *p = roster_lookup(home, number);
+	if (p == NULL)
+		return false;
+	p->plus_minus = value;
+	mark_dirty();
+	return true;
+}
+
+bool scoreboard_player_set_goals(bool home, int number, int goals)
+{
+	struct scoreboard_player *p = roster_lookup(home, number);
+	if (p == NULL)
+		return false;
+	p->goals = goals < 0 ? 0 : goals;
+	mark_dirty();
+	return true;
+}
+
+bool scoreboard_player_set_assists(bool home, int number, int assists)
+{
+	struct scoreboard_player *p = roster_lookup(home, number);
+	if (p == NULL)
+		return false;
+	p->assists = assists < 0 ? 0 : assists;
+	mark_dirty();
+	return true;
+}
+
+int scoreboard_player_get_goals(bool home, int number)
+{
+	const struct scoreboard_player *p = roster_lookup(home, number);
+	return p != NULL ? p->goals : 0;
+}
+
+int scoreboard_player_get_assists(bool home, int number)
+{
+	const struct scoreboard_player *p = roster_lookup(home, number);
+	return p != NULL ? p->assists : 0;
+}
+
+void scoreboard_roster_reset_scoring(bool home)
+{
+	struct scoreboard_player *roster = roster_array(home);
+	int count = *roster_count_ptr(home);
+	for (int i = 0; i < count; i++) {
+		roster[i].goals = 0;
+		roster[i].assists = 0;
+	}
+	/* Recorded credits no longer match the totals. */
+	for (int i = 0; i < g_state.pm_event_count; i++) {
+		if (g_state.pm_events[i].home_scored == home) {
+			g_state.pm_events[i].scorer = -1;
+			g_state.pm_events[i].assist1 = -1;
+			g_state.pm_events[i].assist2 = -1;
+		}
+	}
+	mark_dirty();
+}
+
 void scoreboard_set_plus_minus_skip_power_play(bool skip)
 {
 	g_state.pm_skip_power_play = skip;
@@ -643,6 +709,31 @@ void scoreboard_format_plus_minus_lines(bool home, bool all, char *buf,
 	}
 }
 
+void scoreboard_format_scoring_lines(bool home, char *buf, size_t size)
+{
+	if (size == 0)
+		return;
+	buf[0] = '\0';
+	const struct scoreboard_player *roster = roster_array(home);
+	int count = *roster_count_ptr(home);
+	size_t len = 0;
+	for (int i = 0; i < count; i++) {
+		if (roster[i].goals == 0 && roster[i].assists == 0)
+			continue;
+		char line[48];
+		snprintf(line, sizeof(line), "#%d  %dG %dA", roster[i].number,
+			 roster[i].goals, roster[i].assists);
+		size_t line_len = strlen(line);
+		size_t need = line_len + (len > 0 ? 1 : 0);
+		if (len + need >= size)
+			break;
+		if (len > 0)
+			buf[len++] = '\n';
+		memcpy(buf + len, line, line_len + 1);
+		len += line_len;
+	}
+}
+
 void scoreboard_roster_to_string(bool home, char *buf, size_t size)
 {
 	if (size == 0)
@@ -652,9 +743,10 @@ void scoreboard_roster_to_string(bool home, char *buf, size_t size)
 	int count = *roster_count_ptr(home);
 	size_t len = 0;
 	for (int i = 0; i < count; i++) {
-		char item[48];
-		snprintf(item, sizeof(item), "%d:%d:%d", roster[i].number,
-			 roster[i].on_ice ? 1 : 0, roster[i].plus_minus);
+		char item[64];
+		snprintf(item, sizeof(item), "%d:%d:%d:%d:%d", roster[i].number,
+			 roster[i].on_ice ? 1 : 0, roster[i].plus_minus,
+			 roster[i].goals, roster[i].assists);
 		size_t item_len = strlen(item);
 		size_t need = item_len + (len > 0 ? 1 : 0);
 		if (len + need >= size)
@@ -676,16 +768,12 @@ void scoreboard_roster_from_string(bool home, const char *text)
 	while (*p != '\0') {
 		char *end = NULL;
 		long number = strtol(p, &end, 10);
-		long on_ice = 0;
-		long plus_minus = 0;
+		/* on_ice, plus_minus, goals, assists (older saves have fewer) */
+		long fields[4] = {0, 0, 0, 0};
 		bool readable = (end != p);
 		p = end;
-		if (readable && *p == ':') {
-			on_ice = strtol(p + 1, &end, 10);
-			p = end;
-		}
-		if (readable && *p == ':') {
-			plus_minus = strtol(p + 1, &end, 10);
+		for (int f = 0; f < 4 && readable && *p == ':'; f++) {
+			fields[f] = strtol(p + 1, &end, 10);
 			p = end;
 		}
 		/* Skip anything left over up to the next entry. */
@@ -699,8 +787,11 @@ void scoreboard_roster_from_string(bool home, const char *text)
 			if (slot >= 0) {
 				struct scoreboard_player *player =
 					&roster_array(home)[slot];
-				player->on_ice = (on_ice != 0);
-				player->plus_minus = (int)plus_minus;
+				player->on_ice = (fields[0] != 0);
+				player->plus_minus = (int)fields[1];
+				player->goals = fields[2] < 0 ? 0 : (int)fields[2];
+				player->assists =
+					fields[3] < 0 ? 0 : (int)fields[3];
 			}
 		}
 	}
@@ -726,11 +817,104 @@ static void pm_push_event(const struct pm_event *ev)
 	g_state.pm_events[g_state.pm_event_count++] = *ev;
 }
 
+/* Add (delta = 1) or take away (delta = -1) one goal and up to two assists.
+   Numbers below zero mean nobody; counts never go below zero. */
+static void credit_apply(bool home, int scorer, int assist1, int assist2,
+			 int delta)
+{
+	struct scoreboard_player *p = roster_lookup(home, scorer);
+	if (p != NULL && p->goals + delta >= 0)
+		p->goals += delta;
+	int assists[2] = {assist1, assist2};
+	for (int i = 0; i < 2; i++) {
+		p = roster_lookup(home, assists[i]);
+		if (p != NULL && p->assists + delta >= 0)
+			p->assists += delta;
+	}
+}
+
+static int credit_latest_event(bool home)
+{
+	for (int i = g_state.pm_event_count - 1; i >= 0; i--) {
+		if (g_state.pm_events[i].home_scored == home)
+			return i;
+	}
+	return -1;
+}
+
+bool scoreboard_credit_goal(bool home, int scorer, int assist1, int assist2)
+{
+	int given[3] = {scorer, assist1, assist2};
+	for (int i = 0; i < 3; i++) {
+		if (given[i] < 0)
+			continue;
+		if (!roster_lookup(home, given[i]))
+			return false;
+		for (int j = i + 1; j < 3; j++) {
+			if (given[j] == given[i])
+				return false;
+		}
+	}
+	int idx = credit_latest_event(home);
+	if (idx >= 0) {
+		struct pm_event *ev = &g_state.pm_events[idx];
+		credit_apply(home, ev->scorer, ev->assist1, ev->assist2, -1);
+		ev->scorer = scorer < 0 ? -1 : scorer;
+		ev->assist1 = assist1 < 0 ? -1 : assist1;
+		ev->assist2 = assist2 < 0 ? -1 : assist2;
+	}
+	credit_apply(home, scorer, assist1, assist2, 1);
+	mark_dirty();
+	return true;
+}
+
+bool scoreboard_get_last_goal(bool *home, int *scorer, int *assist1,
+			      int *assist2)
+{
+	for (int i = g_state.pm_event_count - 1; i >= 0; i--) {
+		const struct pm_event *ev = &g_state.pm_events[i];
+		if (ev->scorer < 0)
+			continue;
+		*home = ev->home_scored;
+		*scorer = ev->scorer;
+		*assist1 = ev->assist1;
+		*assist2 = ev->assist2;
+		return true;
+	}
+	return false;
+}
+
+void scoreboard_format_last_goal(char *buf, size_t size)
+{
+	if (size == 0)
+		return;
+	buf[0] = '\0';
+	bool home = false;
+	int scorer = 0;
+	int a1 = 0;
+	int a2 = 0;
+	if (!scoreboard_get_last_goal(&home, &scorer, &a1, &a2))
+		return;
+	const char *team = home ? scoreboard_get_home_name()
+				: scoreboard_get_away_name();
+	if (a1 < 0 && a2 < 0)
+		snprintf(buf, size, "%s goal: #%d (unassisted)", team, scorer);
+	else if (a1 >= 0 && a2 >= 0)
+		snprintf(buf, size, "%s goal: #%d (assists: #%d, #%d)", team,
+			 scorer, a1, a2);
+	else
+		snprintf(buf, size, "%s goal: #%d (assist: #%d)", team, scorer,
+			 a1 >= 0 ? a1 : a2);
+}
+
 static void pm_record_goal(bool home_scored)
 {
 	struct pm_event ev;
 	memset(&ev, 0, sizeof(ev));
 	ev.home_scored = home_scored;
+	ev.scorer = -1;
+	ev.assist1 = -1;
+	ev.assist2 = -1;
 
 	if (!(g_state.pm_skip_power_play &&
 	      pm_is_power_play_goal(home_scored))) {
@@ -767,6 +951,8 @@ static void pm_undo_goal(bool home_scored)
 		struct pm_event *ev = &g_state.pm_events[i];
 		if (ev->home_scored != home_scored)
 			continue;
+		credit_apply(home_scored, ev->scorer, ev->assist1,
+			     ev->assist2, -1);
 		for (int j = 0; j < ev->plus_count; j++) {
 			struct scoreboard_player *p =
 				roster_lookup(home_scored, ev->plus_numbers[j]);
@@ -2241,6 +2427,12 @@ bool scoreboard_write_all_files(void)
 		scoreboard_format_plus_minus_lines(false, false, pm_buf,
 						   sizeof(pm_buf));
 		ok = write_text_file(dir, "away_on_ice.txt", pm_buf) && ok;
+		scoreboard_format_scoring_lines(true, pm_buf, sizeof(pm_buf));
+		ok = write_text_file(dir, "home_scoring.txt", pm_buf) && ok;
+		scoreboard_format_scoring_lines(false, pm_buf, sizeof(pm_buf));
+		ok = write_text_file(dir, "away_scoring.txt", pm_buf) && ok;
+		scoreboard_format_last_goal(pm_buf, sizeof(pm_buf));
+		ok = write_text_file(dir, "last_goal.txt", pm_buf) && ok;
 	}
 
 	g_dirty = false;
@@ -2474,6 +2666,10 @@ bool scoreboard_save_state(const char *path)
 				i, p->on_ice ? "true" : "false");
 			fprintf(f, "  \"%s_player%d_plus_minus\": %d,\n",
 				prefix, i, p->plus_minus);
+			fprintf(f, "  \"%s_player%d_goals\": %d,\n", prefix, i,
+				p->goals);
+			fprintf(f, "  \"%s_player%d_assists\": %d,\n", prefix,
+				i, p->assists);
 		}
 	}
 
@@ -2636,6 +2832,12 @@ bool scoreboard_load_state(const char *path)
 			snprintf(key, sizeof(key), "%s_player%d_plus_minus",
 				 prefix, i);
 			p->plus_minus = parse_json_int(json, key, 0);
+			snprintf(key, sizeof(key), "%s_player%d_goals", prefix,
+				 i);
+			p->goals = parse_json_int(json, key, 0);
+			snprintf(key, sizeof(key), "%s_player%d_assists",
+				 prefix, i);
+			p->assists = parse_json_int(json, key, 0);
 		}
 	}
 	/* Loaded totals have no matching goal history to reverse. */
@@ -2691,11 +2893,14 @@ void scoreboard_new_game(void)
 		g_state.away_penalties[i].phase2_tenths = 0;
 	}
 
-	/* Rosters carry over; on-ice flags and plus/minus start fresh. */
+	/* Rosters carry over; on-ice flags, plus/minus, goals and assists start
+   fresh. */
 	scoreboard_roster_clear_on_ice(true);
 	scoreboard_roster_clear_on_ice(false);
 	scoreboard_roster_reset_plus_minus(true);
 	scoreboard_roster_reset_plus_minus(false);
+	scoreboard_roster_reset_scoring(true);
+	scoreboard_roster_reset_scoring(false);
 
 	g_state.game_clock_accumulated_tenths = 0;
 	g_state.game_clock_started = false;

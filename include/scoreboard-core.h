@@ -280,6 +280,8 @@ struct scoreboard_player {
 	int number;
 	bool on_ice;
 	int plus_minus;
+	int goals;
+	int assists;
 };
 
 /* Returns the roster slot, or -1 if the number is out of range or the roster
@@ -302,13 +304,37 @@ bool scoreboard_player_adjust_plus_minus(bool home, int number, int delta);
 /* Returns 0 if the player is not on the roster. */
 int scoreboard_player_get_plus_minus(bool home, int number);
 void scoreboard_roster_reset_plus_minus(bool home);
+/* Type in an exact value. Returns false if the player is not on the roster. */
+bool scoreboard_player_set_plus_minus(bool home, int number, int value);
+
+/* Goals and assists per player. Values below zero are stored as zero.
+ * Both return false if the player is not on the roster. */
+bool scoreboard_player_set_goals(bool home, int number, int goals);
+bool scoreboard_player_set_assists(bool home, int number, int assists);
+int scoreboard_player_get_goals(bool home, int number);
+int scoreboard_player_get_assists(bool home, int number);
+void scoreboard_roster_reset_scoring(bool home);
+
+/* Credit the most recent goal by `home`'s team to a scorer and up to two
+ * assists (pass -1 for "nobody"). Crediting the same goal again replaces the
+ * earlier credit, and taking the goal back with scoreboard_decrement_*_score()
+ * removes it. Returns false, changing nothing, if a number is not on the
+ * roster or the same player is named twice. */
+bool scoreboard_credit_goal(bool home, int scorer, int assist1, int assist2);
+/* Who got the latest credited goal still in the history; false if none. */
+bool scoreboard_get_last_goal(bool *home, int *scorer, int *assist1,
+			      int *assist2);
+/* "Eagles goal: #12 (assists: #7, #9)"; empty if no credited goal. */
+void scoreboard_format_last_goal(char *buf, size_t size);
+/* One "#12  1G 2A" line per player with at least one goal or assist. */
+void scoreboard_format_scoring_lines(bool home, char *buf, size_t size);
 
 /* When true (default), goals scored while the scoring team has more players
  * on the ice than the opponent (power play) do not change plus/minus. */
 void scoreboard_set_plus_minus_skip_power_play(bool skip);
 bool scoreboard_get_plus_minus_skip_power_play(void);
 
-/* Compact text form of a roster ("number:on_ice:plus_minus,...") so a front
+/* Compact text form of a roster ("number:on_ice:plus_minus:goals:assists,...") so a front
  * end can keep it across restarts. from_string replaces the roster; entries
  * that cannot be read are skipped. */
 void scoreboard_roster_to_string(bool home, char *buf, size_t size);

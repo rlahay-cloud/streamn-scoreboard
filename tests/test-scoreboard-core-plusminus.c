@@ -656,7 +656,7 @@ static void test_roster_to_string(void)
 	char buf[128];
 
 	scoreboard_roster_to_string(true, buf, sizeof(buf));
-	assert(strcmp(buf, "10:0:0,11:1:0,12:0:-3") == 0);
+	assert(strcmp(buf, "10:0:0:0:0,11:1:0:0:0,12:0:-3:0:0") == 0);
 
 	scoreboard_roster_clear(false);
 	scoreboard_roster_to_string(false, buf, sizeof(buf));
@@ -666,10 +666,10 @@ static void test_roster_to_string(void)
 static void test_roster_to_string_truncates_cleanly(void)
 {
 	setup_rosters();
-	char buf[10];
-	/* "10:0:0" fits (6 chars); adding ",11:0:0" would not. */
+	char buf[16];
+	/* "10:0:0:0:0" fits (10 chars); adding ",11:0:0:0:0" would not. */
 	scoreboard_roster_to_string(true, buf, sizeof(buf));
-	assert(strcmp(buf, "10:0:0") == 0);
+	assert(strcmp(buf, "10:0:0:0:0") == 0);
 
 	char zero[1] = {'x'};
 	scoreboard_roster_to_string(true, zero, 0);
@@ -900,6 +900,285 @@ static void test_new_game_resets_plus_minus_but_keeps_rosters(void)
 	assert(scoreboard_player_get_plus_minus(false, 20) == 0);
 }
 
+/* ---- manual +/-, goals and assists ---- */
+
+static void test_set_plus_minus_exact_value(void)
+{
+	setup_rosters();
+	assert(scoreboard_player_set_plus_minus(true, 10, 7));
+	assert(scoreboard_player_get_plus_minus(true, 10) == 7);
+	assert(scoreboard_player_set_plus_minus(true, 10, -3));
+	assert(scoreboard_player_get_plus_minus(true, 10) == -3);
+	assert(!scoreboard_player_set_plus_minus(true, 99, 1));
+}
+
+static void test_set_goals_and_assists(void)
+{
+	setup_rosters();
+	assert(scoreboard_player_set_goals(true, 10, 2));
+	assert(scoreboard_player_set_assists(true, 10, 3));
+	assert(scoreboard_player_get_goals(true, 10) == 2);
+	assert(scoreboard_player_get_assists(true, 10) == 3);
+	assert(scoreboard_player_set_goals(true, 10, -4));
+	assert(scoreboard_player_set_assists(true, 10, -4));
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_assists(true, 10) == 0);
+	assert(!scoreboard_player_set_goals(true, 99, 1));
+	assert(!scoreboard_player_set_assists(true, 99, 1));
+	assert(scoreboard_player_get_goals(true, 99) == 0);
+	assert(scoreboard_player_get_assists(true, 99) == 0);
+	assert(scoreboard_roster_get(true, 0)->goals == 0);
+}
+
+static void test_credit_goal_scorer_and_assists(void)
+{
+	setup_rosters();
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 10, 11, 12));
+	assert(scoreboard_player_get_goals(true, 10) == 1);
+	assert(scoreboard_player_get_assists(true, 11) == 1);
+	assert(scoreboard_player_get_assists(true, 12) == 1);
+	assert(scoreboard_player_get_assists(true, 10) == 0);
+}
+
+static void test_credit_goal_without_assists_or_scorer(void)
+{
+	setup_rosters();
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 10, -1, -1));
+	assert(scoreboard_player_get_goals(true, 10) == 1);
+	assert(scoreboard_credit_goal(true, -1, 11, -1));
+	/* second call replaced the first credit */
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_assists(true, 11) == 1);
+}
+
+static void test_credit_goal_rejects_bad_input(void)
+{
+	setup_rosters();
+	scoreboard_increment_home_score();
+	assert(!scoreboard_credit_goal(true, 99, -1, -1));
+	assert(!scoreboard_credit_goal(true, 10, 99, -1));
+	assert(!scoreboard_credit_goal(true, 10, 10, -1));
+	assert(!scoreboard_credit_goal(true, 10, 11, 10));
+	assert(!scoreboard_credit_goal(true, 10, 11, 11));
+	assert(!scoreboard_credit_goal(true, 10, 99, 99));
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_assists(true, 11) == 0);
+}
+
+static void test_credit_goal_correction_replaces_credit(void)
+{
+	setup_rosters();
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 10, 11, -1));
+	assert(scoreboard_credit_goal(true, 12, -1, 10));
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_assists(true, 11) == 0);
+	assert(scoreboard_player_get_goals(true, 12) == 1);
+	assert(scoreboard_player_get_assists(true, 10) == 1);
+}
+
+static void test_credit_goal_goes_to_latest_goal_of_that_team(void)
+{
+	setup_rosters();
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 10, -1, -1));
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 11, -1, -1));
+	scoreboard_increment_away_score();
+	assert(scoreboard_credit_goal(false, 20, -1, -1));
+	scoreboard_decrement_home_score();
+	assert(scoreboard_player_get_goals(true, 11) == 0);
+	assert(scoreboard_player_get_goals(true, 10) == 1);
+	assert(scoreboard_player_get_goals(false, 20) == 1);
+}
+
+static void test_removing_goal_removes_credit(void)
+{
+	setup_rosters();
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 10, 11, 12));
+	scoreboard_decrement_home_score();
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_assists(true, 11) == 0);
+	assert(scoreboard_player_get_assists(true, 12) == 0);
+	bool home;
+	int a, b, c;
+	assert(!scoreboard_get_last_goal(&home, &a, &b, &c));
+}
+
+static void test_removing_goal_never_goes_below_zero(void)
+{
+	setup_rosters();
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 10, 11, -1));
+	scoreboard_player_set_goals(true, 10, 0);
+	scoreboard_player_set_assists(true, 11, 0);
+	scoreboard_decrement_home_score();
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_assists(true, 11) == 0);
+}
+
+static void test_credit_goal_without_recorded_goal(void)
+{
+	setup_rosters();
+	/* no goal in history: credit still counts, but nothing to reverse */
+	assert(scoreboard_credit_goal(true, 10, -1, -1));
+	assert(scoreboard_player_get_goals(true, 10) == 1);
+	bool home;
+	int a, b, c;
+	assert(!scoreboard_get_last_goal(&home, &a, &b, &c));
+}
+
+static void test_last_goal_and_format(void)
+{
+	char buf[128];
+	setup_rosters();
+	scoreboard_set_home_name("Eagles");
+	scoreboard_set_away_name("Wolves");
+	scoreboard_format_last_goal(buf, sizeof(buf));
+	assert(strcmp(buf, "") == 0);
+	scoreboard_format_last_goal(buf, 0);
+
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 10, -1, -1));
+	scoreboard_format_last_goal(buf, sizeof(buf));
+	assert(strcmp(buf, "Eagles goal: #10 (unassisted)") == 0);
+
+	scoreboard_increment_away_score();
+	assert(scoreboard_credit_goal(false, 20, -1, 21));
+	scoreboard_format_last_goal(buf, sizeof(buf));
+	assert(strcmp(buf, "Wolves goal: #20 (assist: #21)") == 0);
+	assert(scoreboard_credit_goal(false, 20, 21, -1));
+	scoreboard_format_last_goal(buf, sizeof(buf));
+	assert(strcmp(buf, "Wolves goal: #20 (assist: #21)") == 0);
+
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 11, 10, 12));
+	scoreboard_format_last_goal(buf, sizeof(buf));
+	assert(strcmp(buf, "Eagles goal: #11 (assists: #10, #12)") == 0);
+
+	bool home = false;
+	int s = 0, a1 = 0, a2 = 0;
+	assert(scoreboard_get_last_goal(&home, &s, &a1, &a2));
+	assert(home && s == 11 && a1 == 10 && a2 == 12);
+
+	/* an uncredited newer goal is skipped */
+	scoreboard_increment_away_score();
+	scoreboard_format_last_goal(buf, sizeof(buf));
+	assert(strcmp(buf, "Eagles goal: #11 (assists: #10, #12)") == 0);
+}
+
+static void test_reset_scoring(void)
+{
+	setup_rosters();
+	scoreboard_increment_home_score();
+	scoreboard_increment_away_score();
+	assert(scoreboard_credit_goal(true, 10, 11, -1));
+	assert(scoreboard_credit_goal(false, 20, -1, -1));
+	scoreboard_roster_reset_scoring(true);
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_assists(true, 11) == 0);
+	assert(scoreboard_player_get_goals(false, 20) == 1);
+	/* credit history for home was cleared; away's is kept */
+	bool home = true;
+	int s, a, b;
+	assert(scoreboard_get_last_goal(&home, &s, &a, &b));
+	assert(!home && s == 20);
+	/* a goal taken back after the reset cannot make totals negative */
+	scoreboard_decrement_home_score();
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+}
+
+static void test_scoring_lines(void)
+{
+	char buf[256];
+	setup_rosters();
+	scoreboard_format_scoring_lines(true, buf, 0);
+	scoreboard_format_scoring_lines(true, buf, sizeof(buf));
+	assert(strcmp(buf, "") == 0);
+	scoreboard_player_set_goals(true, 10, 2);
+	scoreboard_player_set_assists(true, 12, 1);
+	scoreboard_format_scoring_lines(true, buf, sizeof(buf));
+	assert(strcmp(buf, "#10  2G 0A\n#12  0G 1A") == 0);
+	scoreboard_format_scoring_lines(true, buf, 14);
+	assert(strcmp(buf, "#10  2G 0A") == 0);
+	scoreboard_format_scoring_lines(false, buf, sizeof(buf));
+	assert(strcmp(buf, "") == 0);
+}
+
+static void test_scoring_files_written(void)
+{
+	setup_tmp_dir();
+	setup_rosters();
+	scoreboard_set_home_name("Eagles");
+	scoreboard_set_output_directory(g_tmp_dir);
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(true, 10, 11, -1));
+	assert(scoreboard_write_all_files());
+	expect_file("home_scoring.txt", "#10  1G 0A\n#11  0G 1A");
+	expect_file("away_scoring.txt", "");
+	expect_file("last_goal.txt", "Eagles goal: #10 (assist: #11)");
+	cleanup_tmp_dir();
+}
+
+static void test_roster_string_with_scoring(void)
+{
+	char buf[256];
+	setup_rosters();
+	scoreboard_player_set_goals(true, 10, 2);
+	scoreboard_player_set_assists(true, 10, 3);
+	scoreboard_roster_to_string(true, buf, sizeof(buf));
+	assert(strcmp(buf, "10:0:0:2:3,11:0:0:0:0,12:0:0:0:0") == 0);
+	scoreboard_roster_reset_scoring(true);
+	scoreboard_roster_from_string(true, buf);
+	assert(scoreboard_player_get_goals(true, 10) == 2);
+	assert(scoreboard_player_get_assists(true, 10) == 3);
+}
+
+static void test_roster_string_older_forms_still_load(void)
+{
+	setup_rosters();
+	scoreboard_roster_from_string(true, "10:1:-2,11:0:3:1:-5,12");
+	assert(scoreboard_player_get_plus_minus(true, 10) == -2);
+	assert(scoreboard_roster_get(true, 0)->on_ice);
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_goals(true, 11) == 1);
+	assert(scoreboard_player_get_assists(true, 11) == 0);
+	assert(scoreboard_player_get_plus_minus(true, 11) == 3);
+	assert(scoreboard_player_get_goals(true, 12) == 0);
+	scoreboard_roster_from_string(true, "10:0:0:-4:0");
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+}
+
+static void test_save_load_scoring(void)
+{
+	setup_tmp_dir();
+	setup_rosters();
+	scoreboard_player_set_goals(true, 10, 2);
+	scoreboard_player_set_assists(false, 21, 4);
+	char path[512];
+	snprintf(path, sizeof(path), "%s/state.json", g_tmp_dir);
+	assert(scoreboard_save_state(path));
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_load_state(path));
+	assert(scoreboard_player_get_goals(true, 10) == 2);
+	assert(scoreboard_player_get_assists(false, 21) == 4);
+	cleanup_tmp_dir();
+}
+
+static void test_new_game_resets_scoring(void)
+{
+	setup_rosters();
+	scoreboard_player_set_goals(true, 10, 2);
+	scoreboard_player_set_assists(false, 21, 4);
+	scoreboard_new_game();
+	assert(scoreboard_player_get_goals(true, 10) == 0);
+	assert(scoreboard_player_get_assists(false, 21) == 0);
+	assert(scoreboard_roster_count(true) == 3);
+}
+
 int main(void)
 {
 	test_roster_add_and_get();
@@ -965,6 +1244,25 @@ int main(void)
 	test_load_drops_goal_history();
 
 	test_new_game_resets_plus_minus_but_keeps_rosters();
+
+	test_set_plus_minus_exact_value();
+	test_set_goals_and_assists();
+	test_credit_goal_scorer_and_assists();
+	test_credit_goal_without_assists_or_scorer();
+	test_credit_goal_rejects_bad_input();
+	test_credit_goal_correction_replaces_credit();
+	test_credit_goal_goes_to_latest_goal_of_that_team();
+	test_removing_goal_removes_credit();
+	test_removing_goal_never_goes_below_zero();
+	test_credit_goal_without_recorded_goal();
+	test_last_goal_and_format();
+	test_reset_scoring();
+	test_scoring_lines();
+	test_scoring_files_written();
+	test_roster_string_with_scoring();
+	test_roster_string_older_forms_still_load();
+	test_save_load_scoring();
+	test_new_game_resets_scoring();
 
 	printf("All plus/minus tests passed\n");
 	return 0;
