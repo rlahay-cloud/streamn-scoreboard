@@ -19,13 +19,11 @@
    reversed. Players are recorded by jersey number. */
 struct pm_event {
 	bool home_scored;
-	int scorer;  /* credited jersey numbers, -1 when nobody */
+	int scorer;  /* credited jersey numbers (home goals only), -1 when nobody */
 	int assist1;
 	int assist2;
-	int plus_count;
-	int plus_numbers[SCOREBOARD_MAX_ROSTER];
-	int minus_count;
-	int minus_numbers[SCOREBOARD_MAX_ROSTER];
+	int count;   /* home players who got +1 (home goal) or -1 (away goal) */
+	int numbers[SCOREBOARD_MAX_ROSTER];
 };
 
 static const struct scoreboard_sport_preset k_sport_presets[SCOREBOARD_SPORT_COUNT] = {
@@ -96,8 +94,6 @@ static struct {
 
 	struct scoreboard_player home_roster[SCOREBOARD_MAX_ROSTER];
 	int home_roster_count;
-	struct scoreboard_player away_roster[SCOREBOARD_MAX_ROSTER];
-	int away_roster_count;
 	bool pm_skip_power_play;
 	struct pm_event pm_events[SCOREBOARD_PM_EVENT_CAPACITY];
 	int pm_event_count;
@@ -445,97 +441,85 @@ void scoreboard_reset_state_for_tests(void)
 
 /* ---- player roster and plus/minus ---- */
 
+/* Only the home team's players are tracked. Every stat has a "game" value
+   (cleared by New Game) and a "season" value that keeps adding up across
+   games. A change to a game stat moves the season stat by the same amount. */
+
 static void pm_record_goal(bool home_scored);
 static void pm_undo_goal(bool home_scored);
 static void pm_forget_goals(bool home_scored);
 
-static struct scoreboard_player *roster_array(bool home)
+static int roster_index(int number)
 {
-	return home ? g_state.home_roster : g_state.away_roster;
-}
-
-static int *roster_count_ptr(bool home)
-{
-	return home ? &g_state.home_roster_count : &g_state.away_roster_count;
-}
-
-static int roster_index(bool home, int number)
-{
-	const struct scoreboard_player *roster = roster_array(home);
-	int count = *roster_count_ptr(home);
-	for (int i = 0; i < count; i++) {
-		if (roster[i].number == number)
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		if (g_state.home_roster[i].number == number)
 			return i;
 	}
 	return -1;
 }
 
-static struct scoreboard_player *roster_lookup(bool home, int number)
+static struct scoreboard_player *roster_lookup(int number)
 {
-	int idx = roster_index(home, number);
-	return idx >= 0 ? &roster_array(home)[idx] : NULL;
+	int idx = roster_index(number);
+	return idx >= 0 ? &g_state.home_roster[idx] : NULL;
 }
 
-int scoreboard_roster_add(bool home, int number)
+int scoreboard_roster_add(int number)
 {
 	if (number < 0 || number > SCOREBOARD_MAX_PLAYER_NUMBER)
 		return -1;
-	int existing = roster_index(home, number);
+	int existing = roster_index(number);
 	if (existing >= 0)
 		return existing;
-	int *count = roster_count_ptr(home);
-	if (*count >= SCOREBOARD_MAX_ROSTER)
+	if (g_state.home_roster_count >= SCOREBOARD_MAX_ROSTER)
 		return -1;
-	struct scoreboard_player *p = &roster_array(home)[*count];
+	struct scoreboard_player *p =
+		&g_state.home_roster[g_state.home_roster_count];
+	memset(p, 0, sizeof(*p));
 	p->number = number;
-	p->on_ice = false;
-	p->plus_minus = 0;
-	p->goals = 0;
-	p->assists = 0;
 	mark_dirty();
-	return (*count)++;
+	return g_state.home_roster_count++;
 }
 
-bool scoreboard_roster_remove(bool home, int number)
+bool scoreboard_roster_remove(int number)
 {
-	int idx = roster_index(home, number);
+	int idx = roster_index(number);
 	if (idx < 0)
 		return false;
-	struct scoreboard_player *roster = roster_array(home);
-	int *count = roster_count_ptr(home);
-	memmove(&roster[idx], &roster[idx + 1],
-		sizeof(roster[0]) * (size_t)(*count - idx - 1));
-	(*count)--;
+	for (int i = idx; i < g_state.home_roster_count - 1; i++)
+		g_state.home_roster[i] = g_state.home_roster[i + 1];
+	g_state.home_roster_count--;
 	mark_dirty();
 	return true;
 }
 
-void scoreboard_roster_clear(bool home)
+void scoreboard_roster_clear(void)
 {
-	*roster_count_ptr(home) = 0;
+	g_state.home_roster_count = 0;
+	g_state.pm_event_count = 0;
 	mark_dirty();
 }
 
-int scoreboard_roster_count(bool home)
+int scoreboard_roster_count(void)
 {
-	return *roster_count_ptr(home);
+	return g_state.home_roster_count;
 }
 
-const struct scoreboard_player *scoreboard_roster_get(bool home, int index)
+const struct scoreboard_player *scoreboard_roster_get(int index)
 {
-	if (index < 0 || index >= *roster_count_ptr(home))
+	if (index < 0 || index >= g_state.home_roster_count)
 		return NULL;
-	return &roster_array(home)[index];
+	return &g_state.home_roster[index];
 }
 
-bool scoreboard_roster_find(bool home, int number)
+bool scoreboard_roster_find(int number)
 {
-	return roster_index(home, number) >= 0;
+	return roster_index(number) >= 0;
 }
 
-bool scoreboard_player_set_on_ice(bool home, int number, bool on_ice)
+bool scoreboard_player_set_on_ice(int number, bool on_ice)
 {
-	struct scoreboard_player *p = roster_lookup(home, number);
+	struct scoreboard_player *p = roster_lookup(number);
 	if (p == NULL)
 		return false;
 	p->on_ice = on_ice;
@@ -543,9 +527,9 @@ bool scoreboard_player_set_on_ice(bool home, int number, bool on_ice)
 	return true;
 }
 
-bool scoreboard_player_toggle_on_ice(bool home, int number)
+bool scoreboard_player_toggle_on_ice(int number)
 {
-	struct scoreboard_player *p = roster_lookup(home, number);
+	struct scoreboard_player *p = roster_lookup(number);
 	if (p == NULL)
 		return false;
 	p->on_ice = !p->on_ice;
@@ -553,111 +537,130 @@ bool scoreboard_player_toggle_on_ice(bool home, int number)
 	return true;
 }
 
-void scoreboard_roster_clear_on_ice(bool home)
+void scoreboard_roster_clear_on_ice(void)
 {
-	struct scoreboard_player *roster = roster_array(home);
-	int count = *roster_count_ptr(home);
-	for (int i = 0; i < count; i++)
-		roster[i].on_ice = false;
+	for (int i = 0; i < g_state.home_roster_count; i++)
+		g_state.home_roster[i].on_ice = false;
 	mark_dirty();
 }
 
-int scoreboard_roster_on_ice_count(bool home)
+int scoreboard_roster_on_ice_count(void)
 {
-	const struct scoreboard_player *roster = roster_array(home);
-	int count = *roster_count_ptr(home);
 	int on_ice = 0;
-	for (int i = 0; i < count; i++) {
-		if (roster[i].on_ice)
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		if (g_state.home_roster[i].on_ice)
 			on_ice++;
 	}
 	return on_ice;
 }
 
-bool scoreboard_player_adjust_plus_minus(bool home, int number, int delta)
+/* Change a game stat and the season stat together. Goals and assists never
+   drop below zero in either place. */
+static void player_add_plus_minus(struct scoreboard_player *p, int delta)
 {
-	struct scoreboard_player *p = roster_lookup(home, number);
+	p->plus_minus += delta;
+	p->season_plus_minus += delta;
+}
+
+static int clamp_zero(int value)
+{
+	return value < 0 ? 0 : value;
+}
+
+bool scoreboard_player_adjust_plus_minus(int number, int delta)
+{
+	struct scoreboard_player *p = roster_lookup(number);
 	if (p == NULL)
 		return false;
-	p->plus_minus += delta;
+	player_add_plus_minus(p, delta);
 	mark_dirty();
 	return true;
 }
 
-int scoreboard_player_get_plus_minus(bool home, int number)
+bool scoreboard_player_set_plus_minus(int number, int value)
 {
-	const struct scoreboard_player *p = roster_lookup(home, number);
+	struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	player_add_plus_minus(p, value - p->plus_minus);
+	mark_dirty();
+	return true;
+}
+
+bool scoreboard_player_set_goals(int number, int goals)
+{
+	struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	int value = clamp_zero(goals);
+	p->season_goals = clamp_zero(p->season_goals + value - p->goals);
+	p->goals = value;
+	mark_dirty();
+	return true;
+}
+
+bool scoreboard_player_set_assists(int number, int assists)
+{
+	struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	int value = clamp_zero(assists);
+	p->season_assists = clamp_zero(p->season_assists + value - p->assists);
+	p->assists = value;
+	mark_dirty();
+	return true;
+}
+
+bool scoreboard_player_set_season(int number, int plus_minus, int goals,
+				  int assists)
+{
+	struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	p->season_plus_minus = plus_minus;
+	p->season_goals = clamp_zero(goals);
+	p->season_assists = clamp_zero(assists);
+	mark_dirty();
+	return true;
+}
+
+int scoreboard_player_get_plus_minus(int number)
+{
+	const struct scoreboard_player *p = roster_lookup(number);
 	return p != NULL ? p->plus_minus : 0;
 }
 
-void scoreboard_roster_reset_plus_minus(bool home)
+int scoreboard_player_get_goals(int number)
 {
-	struct scoreboard_player *roster = roster_array(home);
-	int count = *roster_count_ptr(home);
-	for (int i = 0; i < count; i++)
-		roster[i].plus_minus = 0;
+	const struct scoreboard_player *p = roster_lookup(number);
+	return p != NULL ? p->goals : 0;
+}
+
+int scoreboard_player_get_assists(int number)
+{
+	const struct scoreboard_player *p = roster_lookup(number);
+	return p != NULL ? p->assists : 0;
+}
+
+/* Starts a new game: game stats go to zero, season stats stay. */
+void scoreboard_roster_reset_game_stats(void)
+{
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		g_state.home_roster[i].plus_minus = 0;
+		g_state.home_roster[i].goals = 0;
+		g_state.home_roster[i].assists = 0;
+	}
 	/* Recorded goal awards no longer match the totals. */
 	g_state.pm_event_count = 0;
 	mark_dirty();
 }
 
-bool scoreboard_player_set_plus_minus(bool home, int number, int value)
+void scoreboard_roster_reset_season_stats(void)
 {
-	struct scoreboard_player *p = roster_lookup(home, number);
-	if (p == NULL)
-		return false;
-	p->plus_minus = value;
-	mark_dirty();
-	return true;
-}
-
-bool scoreboard_player_set_goals(bool home, int number, int goals)
-{
-	struct scoreboard_player *p = roster_lookup(home, number);
-	if (p == NULL)
-		return false;
-	p->goals = goals < 0 ? 0 : goals;
-	mark_dirty();
-	return true;
-}
-
-bool scoreboard_player_set_assists(bool home, int number, int assists)
-{
-	struct scoreboard_player *p = roster_lookup(home, number);
-	if (p == NULL)
-		return false;
-	p->assists = assists < 0 ? 0 : assists;
-	mark_dirty();
-	return true;
-}
-
-int scoreboard_player_get_goals(bool home, int number)
-{
-	const struct scoreboard_player *p = roster_lookup(home, number);
-	return p != NULL ? p->goals : 0;
-}
-
-int scoreboard_player_get_assists(bool home, int number)
-{
-	const struct scoreboard_player *p = roster_lookup(home, number);
-	return p != NULL ? p->assists : 0;
-}
-
-void scoreboard_roster_reset_scoring(bool home)
-{
-	struct scoreboard_player *roster = roster_array(home);
-	int count = *roster_count_ptr(home);
-	for (int i = 0; i < count; i++) {
-		roster[i].goals = 0;
-		roster[i].assists = 0;
-	}
-	/* Recorded credits no longer match the totals. */
-	for (int i = 0; i < g_state.pm_event_count; i++) {
-		if (g_state.pm_events[i].home_scored == home) {
-			g_state.pm_events[i].scorer = -1;
-			g_state.pm_events[i].assist1 = -1;
-			g_state.pm_events[i].assist2 = -1;
-		}
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		g_state.home_roster[i].season_plus_minus = 0;
+		g_state.home_roster[i].season_goals = 0;
+		g_state.home_roster[i].season_assists = 0;
 	}
 	mark_dirty();
 }
@@ -681,72 +684,79 @@ void scoreboard_format_plus_minus(int value, char *buf, size_t size)
 		snprintf(buf, size, "%+d", value);
 }
 
-void scoreboard_format_plus_minus_lines(bool home, bool all, char *buf,
+/* Append one line (and a separating newline) if it fits. Returns false when
+   there is no more room. */
+static bool append_line(char *buf, size_t size, size_t *len, const char *line)
+{
+	size_t line_len = strlen(line);
+	size_t need = line_len + (*len > 0 ? 1 : 0);
+	if (*len + need >= size)
+		return false;
+	if (*len > 0)
+		buf[(*len)++] = '\n';
+	memcpy(buf + *len, line, line_len + 1);
+	*len += line_len;
+	return true;
+}
+
+/* One line per player: "#12  +2" with right-aligned numbers so the columns
+   line up in a monospaced font. */
+void scoreboard_format_plus_minus_lines(bool all, bool season, char *buf,
 					size_t size)
 {
 	if (size == 0)
 		return;
 	buf[0] = '\0';
-	const struct scoreboard_player *roster = roster_array(home);
-	int count = *roster_count_ptr(home);
 	size_t len = 0;
-	for (int i = 0; i < count; i++) {
-		if (!all && !roster[i].on_ice)
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		const struct scoreboard_player *p = &g_state.home_roster[i];
+		if (!all && !p->on_ice)
 			continue;
 		char pm[16];
 		char line[48];
-		scoreboard_format_plus_minus(roster[i].plus_minus, pm,
-					     sizeof(pm));
-		snprintf(line, sizeof(line), "#%d  %s", roster[i].number, pm);
-		size_t line_len = strlen(line);
-		size_t need = line_len + (len > 0 ? 1 : 0);
-		if (len + need >= size)
+		scoreboard_format_plus_minus(
+			season ? p->season_plus_minus : p->plus_minus, pm,
+			sizeof(pm));
+		snprintf(line, sizeof(line), "#%-3d %4s", p->number, pm);
+		if (!append_line(buf, size, &len, line))
 			break;
-		if (len > 0)
-			buf[len++] = '\n';
-		memcpy(buf + len, line, line_len + 1);
-		len += line_len;
 	}
 }
 
-void scoreboard_format_scoring_lines(bool home, char *buf, size_t size)
+/* One "#12  1G  2A  3P" line per player with at least one goal or assist. */
+void scoreboard_format_scoring_lines(bool season, char *buf, size_t size)
 {
 	if (size == 0)
 		return;
 	buf[0] = '\0';
-	const struct scoreboard_player *roster = roster_array(home);
-	int count = *roster_count_ptr(home);
 	size_t len = 0;
-	for (int i = 0; i < count; i++) {
-		if (roster[i].goals == 0 && roster[i].assists == 0)
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		const struct scoreboard_player *p = &g_state.home_roster[i];
+		int goals = season ? p->season_goals : p->goals;
+		int assists = season ? p->season_assists : p->assists;
+		if (goals == 0 && assists == 0)
 			continue;
-		char line[48];
-		snprintf(line, sizeof(line), "#%d  %dG %dA", roster[i].number,
-			 roster[i].goals, roster[i].assists);
-		size_t line_len = strlen(line);
-		size_t need = line_len + (len > 0 ? 1 : 0);
-		if (len + need >= size)
+		char line[64];
+		snprintf(line, sizeof(line), "#%-3d %2dG %2dA %2dP", p->number,
+			 goals, assists, goals + assists);
+		if (!append_line(buf, size, &len, line))
 			break;
-		if (len > 0)
-			buf[len++] = '\n';
-		memcpy(buf + len, line, line_len + 1);
-		len += line_len;
 	}
 }
 
-void scoreboard_roster_to_string(bool home, char *buf, size_t size)
+void scoreboard_roster_to_string(char *buf, size_t size)
 {
 	if (size == 0)
 		return;
 	buf[0] = '\0';
-	const struct scoreboard_player *roster = roster_array(home);
-	int count = *roster_count_ptr(home);
 	size_t len = 0;
-	for (int i = 0; i < count; i++) {
-		char item[64];
-		snprintf(item, sizeof(item), "%d:%d:%d:%d:%d", roster[i].number,
-			 roster[i].on_ice ? 1 : 0, roster[i].plus_minus,
-			 roster[i].goals, roster[i].assists);
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		const struct scoreboard_player *p = &g_state.home_roster[i];
+		char item[96];
+		snprintf(item, sizeof(item), "%d:%d:%d:%d:%d:%d:%d:%d",
+			 p->number, p->on_ice ? 1 : 0, p->plus_minus, p->goals,
+			 p->assists, p->season_plus_minus, p->season_goals,
+			 p->season_assists);
 		size_t item_len = strlen(item);
 		size_t need = item_len + (len > 0 ? 1 : 0);
 		if (len + need >= size)
@@ -758,9 +768,10 @@ void scoreboard_roster_to_string(bool home, char *buf, size_t size)
 	}
 }
 
-void scoreboard_roster_from_string(bool home, const char *text)
+void scoreboard_roster_from_string(const char *text)
 {
-	*roster_count_ptr(home) = 0;
+	g_state.home_roster_count = 0;
+	g_state.pm_event_count = 0;
 	mark_dirty();
 	if (text == NULL)
 		return;
@@ -768,12 +779,14 @@ void scoreboard_roster_from_string(bool home, const char *text)
 	while (*p != '\0') {
 		char *end = NULL;
 		long number = strtol(p, &end, 10);
-		/* on_ice, plus_minus, goals, assists (older saves have fewer) */
-		long fields[4] = {0, 0, 0, 0};
+		/* on_ice, +/-, goals, assists, then season +/-, goals, assists.
+		   Older saves have fewer fields. */
+		long fields[7] = {0, 0, 0, 0, 0, 0, 0};
+		int read = 0;
 		bool readable = (end != p);
 		p = end;
-		for (int f = 0; f < 4 && readable && *p == ':'; f++) {
-			fields[f] = strtol(p + 1, &end, 10);
+		for (; read < 7 && readable && *p == ':'; read++) {
+			fields[read] = strtol(p + 1, &end, 10);
 			p = end;
 		}
 		/* Skip anything left over up to the next entry. */
@@ -783,15 +796,29 @@ void scoreboard_roster_from_string(bool home, const char *text)
 			p++;
 		if (readable && number >= 0 &&
 		    number <= SCOREBOARD_MAX_PLAYER_NUMBER) {
-			int slot = scoreboard_roster_add(home, (int)number);
+			int slot = scoreboard_roster_add((int)number);
 			if (slot >= 0) {
 				struct scoreboard_player *player =
-					&roster_array(home)[slot];
+					&g_state.home_roster[slot];
 				player->on_ice = (fields[0] != 0);
 				player->plus_minus = (int)fields[1];
-				player->goals = fields[2] < 0 ? 0 : (int)fields[2];
-				player->assists =
-					fields[3] < 0 ? 0 : (int)fields[3];
+				player->goals = clamp_zero((int)fields[2]);
+				player->assists = clamp_zero((int)fields[3]);
+				if (read >= 7) {
+					player->season_plus_minus = (int)fields[4];
+					player->season_goals =
+						clamp_zero((int)fields[5]);
+					player->season_assists =
+						clamp_zero((int)fields[6]);
+				} else {
+					/* No season numbers saved yet: start
+					   the season from this game. */
+					player->season_plus_minus =
+						player->plus_minus;
+					player->season_goals = player->goals;
+					player->season_assists =
+						player->assists;
+				}
 			}
 		}
 	}
@@ -818,64 +845,66 @@ static void pm_push_event(const struct pm_event *ev)
 }
 
 /* Add (delta = 1) or take away (delta = -1) one goal and up to two assists.
-   Numbers below zero mean nobody; counts never go below zero. */
-static void credit_apply(bool home, int scorer, int assist1, int assist2,
-			 int delta)
+   Numbers below zero mean nobody. */
+static void credit_apply(int scorer, int assist1, int assist2, int delta)
 {
-	struct scoreboard_player *p = roster_lookup(home, scorer);
-	if (p != NULL && p->goals + delta >= 0)
-		p->goals += delta;
+	struct scoreboard_player *p = roster_lookup(scorer);
+	if (p != NULL) {
+		p->goals = clamp_zero(p->goals + delta);
+		p->season_goals = clamp_zero(p->season_goals + delta);
+	}
 	int assists[2] = {assist1, assist2};
 	for (int i = 0; i < 2; i++) {
-		p = roster_lookup(home, assists[i]);
-		if (p != NULL && p->assists + delta >= 0)
-			p->assists += delta;
+		p = roster_lookup(assists[i]);
+		if (p != NULL) {
+			p->assists = clamp_zero(p->assists + delta);
+			p->season_assists =
+				clamp_zero(p->season_assists + delta);
+		}
 	}
 }
 
-static int credit_latest_event(bool home)
+static int credit_latest_home_event(void)
 {
 	for (int i = g_state.pm_event_count - 1; i >= 0; i--) {
-		if (g_state.pm_events[i].home_scored == home)
+		if (g_state.pm_events[i].home_scored)
 			return i;
 	}
 	return -1;
 }
 
-bool scoreboard_credit_goal(bool home, int scorer, int assist1, int assist2)
+bool scoreboard_credit_goal(int scorer, int assist1, int assist2)
 {
 	int given[3] = {scorer, assist1, assist2};
 	for (int i = 0; i < 3; i++) {
 		if (given[i] < 0)
 			continue;
-		if (!roster_lookup(home, given[i]))
+		if (!roster_lookup(given[i]))
 			return false;
 		for (int j = i + 1; j < 3; j++) {
 			if (given[j] == given[i])
 				return false;
 		}
 	}
-	int idx = credit_latest_event(home);
+	int idx = credit_latest_home_event();
 	if (idx >= 0) {
 		struct pm_event *ev = &g_state.pm_events[idx];
-		credit_apply(home, ev->scorer, ev->assist1, ev->assist2, -1);
+		credit_apply(ev->scorer, ev->assist1, ev->assist2, -1);
 		ev->scorer = scorer < 0 ? -1 : scorer;
 		ev->assist1 = assist1 < 0 ? -1 : assist1;
 		ev->assist2 = assist2 < 0 ? -1 : assist2;
 	}
-	credit_apply(home, scorer, assist1, assist2, 1);
+	credit_apply(scorer, assist1, assist2, 1);
 	mark_dirty();
 	return true;
 }
 
-bool scoreboard_get_last_goal(bool *home, int *scorer, int *assist1,
-			      int *assist2)
+bool scoreboard_get_last_goal(int *scorer, int *assist1, int *assist2)
 {
 	for (int i = g_state.pm_event_count - 1; i >= 0; i--) {
 		const struct pm_event *ev = &g_state.pm_events[i];
 		if (ev->scorer < 0)
 			continue;
-		*home = ev->home_scored;
 		*scorer = ev->scorer;
 		*assist1 = ev->assist1;
 		*assist2 = ev->assist2;
@@ -889,14 +918,12 @@ void scoreboard_format_last_goal(char *buf, size_t size)
 	if (size == 0)
 		return;
 	buf[0] = '\0';
-	bool home = false;
 	int scorer = 0;
 	int a1 = 0;
 	int a2 = 0;
-	if (!scoreboard_get_last_goal(&home, &scorer, &a1, &a2))
+	if (!scoreboard_get_last_goal(&scorer, &a1, &a2))
 		return;
-	const char *team = home ? scoreboard_get_home_name()
-				: scoreboard_get_away_name();
+	const char *team = scoreboard_get_home_name();
 	if (a1 < 0 && a2 < 0)
 		snprintf(buf, size, "%s goal: #%d (unassisted)", team, scorer);
 	else if (a1 >= 0 && a2 >= 0)
@@ -907,6 +934,8 @@ void scoreboard_format_last_goal(char *buf, size_t size)
 			 a1 >= 0 ? a1 : a2);
 }
 
+/* A home goal gives +1 to the home players on the ice, an away goal gives
+   them -1. The numbers are kept so the goal can be taken back later. */
 static void pm_record_goal(bool home_scored)
 {
 	struct pm_event ev;
@@ -918,27 +947,19 @@ static void pm_record_goal(bool home_scored)
 
 	if (!(g_state.pm_skip_power_play &&
 	      pm_is_power_play_goal(home_scored))) {
-		struct scoreboard_player *scorers = roster_array(home_scored);
-		int scorer_count = *roster_count_ptr(home_scored);
-		for (int i = 0; i < scorer_count; i++) {
-			if (!scorers[i].on_ice)
+		int delta = home_scored ? 1 : -1;
+		for (int i = 0; i < g_state.home_roster_count; i++) {
+			struct scoreboard_player *p = &g_state.home_roster[i];
+			if (!p->on_ice)
 				continue;
-			scorers[i].plus_minus++;
-			ev.plus_numbers[ev.plus_count++] = scorers[i].number;
+			player_add_plus_minus(p, delta);
+			ev.numbers[ev.count++] = p->number;
 		}
-		struct scoreboard_player *others = roster_array(!home_scored);
-		int other_count = *roster_count_ptr(!home_scored);
-		for (int i = 0; i < other_count; i++) {
-			if (!others[i].on_ice)
-				continue;
-			others[i].plus_minus--;
-			ev.minus_numbers[ev.minus_count++] = others[i].number;
-		}
-		if (ev.plus_count + ev.minus_count > 0) {
+		if (ev.count > 0) {
 			char msg[SCOREBOARD_ACTION_LOG_ENTRY_SIZE];
 			snprintf(msg, sizeof(msg),
-				 "Plus/minus: +1 for %d, -1 for %d on-ice players",
-				 ev.plus_count, ev.minus_count);
+				 "Plus/minus: %+d for %d on-ice players", delta,
+				 ev.count);
 			scoreboard_add_action_log(msg);
 		}
 	}
@@ -951,19 +972,13 @@ static void pm_undo_goal(bool home_scored)
 		struct pm_event *ev = &g_state.pm_events[i];
 		if (ev->home_scored != home_scored)
 			continue;
-		credit_apply(home_scored, ev->scorer, ev->assist1,
-			     ev->assist2, -1);
-		for (int j = 0; j < ev->plus_count; j++) {
+		credit_apply(ev->scorer, ev->assist1, ev->assist2, -1);
+		int delta = home_scored ? -1 : 1;
+		for (int j = 0; j < ev->count; j++) {
 			struct scoreboard_player *p =
-				roster_lookup(home_scored, ev->plus_numbers[j]);
+				roster_lookup(ev->numbers[j]);
 			if (p != NULL)
-				p->plus_minus--;
-		}
-		for (int j = 0; j < ev->minus_count; j++) {
-			struct scoreboard_player *p = roster_lookup(
-				!home_scored, ev->minus_numbers[j]);
-			if (p != NULL)
-				p->plus_minus++;
+				player_add_plus_minus(p, delta);
 		}
 		memmove(&g_state.pm_events[i], &g_state.pm_events[i + 1],
 			sizeof(g_state.pm_events[0]) *
@@ -2415,22 +2430,21 @@ bool scoreboard_write_all_files(void)
 
 	{
 		char pm_buf[1024];
-		scoreboard_format_plus_minus_lines(true, true, pm_buf,
-						   sizeof(pm_buf));
-		ok = write_text_file(dir, "home_plus_minus.txt", pm_buf) && ok;
-		scoreboard_format_plus_minus_lines(false, true, pm_buf,
-						   sizeof(pm_buf));
-		ok = write_text_file(dir, "away_plus_minus.txt", pm_buf) && ok;
 		scoreboard_format_plus_minus_lines(true, false, pm_buf,
 						   sizeof(pm_buf));
-		ok = write_text_file(dir, "home_on_ice.txt", pm_buf) && ok;
+		ok = write_text_file(dir, "home_plus_minus.txt", pm_buf) && ok;
+		scoreboard_format_plus_minus_lines(true, true, pm_buf,
+						   sizeof(pm_buf));
+		ok = write_text_file(dir, "home_season_plus_minus.txt",
+				     pm_buf) && ok;
 		scoreboard_format_plus_minus_lines(false, false, pm_buf,
 						   sizeof(pm_buf));
-		ok = write_text_file(dir, "away_on_ice.txt", pm_buf) && ok;
-		scoreboard_format_scoring_lines(true, pm_buf, sizeof(pm_buf));
-		ok = write_text_file(dir, "home_scoring.txt", pm_buf) && ok;
+		ok = write_text_file(dir, "home_on_ice.txt", pm_buf) && ok;
 		scoreboard_format_scoring_lines(false, pm_buf, sizeof(pm_buf));
-		ok = write_text_file(dir, "away_scoring.txt", pm_buf) && ok;
+		ok = write_text_file(dir, "home_scoring.txt", pm_buf) && ok;
+		scoreboard_format_scoring_lines(true, pm_buf, sizeof(pm_buf));
+		ok = write_text_file(dir, "home_season_scoring.txt", pm_buf) &&
+		     ok;
 		scoreboard_format_last_goal(pm_buf, sizeof(pm_buf));
 		ok = write_text_file(dir, "last_goal.txt", pm_buf) && ok;
 	}
@@ -2652,25 +2666,22 @@ bool scoreboard_save_state(const char *path)
 
 	fprintf(f, "  \"pm_skip_power_play\": %s,\n",
 		g_state.pm_skip_power_play ? "true" : "false");
-	for (int side = 0; side < 2; side++) {
-		bool home = (side == 0);
-		const char *prefix = home ? "home" : "away";
-		fprintf(f, "  \"%s_roster_count\": %d,\n", prefix,
-			*roster_count_ptr(home));
-		for (int i = 0; i < *roster_count_ptr(home); i++) {
-			const struct scoreboard_player *p =
-				&roster_array(home)[i];
-			fprintf(f, "  \"%s_player%d_number\": %d,\n", prefix,
-				i, p->number);
-			fprintf(f, "  \"%s_player%d_on_ice\": %s,\n", prefix,
-				i, p->on_ice ? "true" : "false");
-			fprintf(f, "  \"%s_player%d_plus_minus\": %d,\n",
-				prefix, i, p->plus_minus);
-			fprintf(f, "  \"%s_player%d_goals\": %d,\n", prefix, i,
-				p->goals);
-			fprintf(f, "  \"%s_player%d_assists\": %d,\n", prefix,
-				i, p->assists);
-		}
+	fprintf(f, "  \"home_roster_count\": %d,\n", g_state.home_roster_count);
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		const struct scoreboard_player *p = &g_state.home_roster[i];
+		fprintf(f, "  \"home_player%d_number\": %d,\n", i, p->number);
+		fprintf(f, "  \"home_player%d_on_ice\": %s,\n", i,
+			p->on_ice ? "true" : "false");
+		fprintf(f, "  \"home_player%d_plus_minus\": %d,\n", i,
+			p->plus_minus);
+		fprintf(f, "  \"home_player%d_goals\": %d,\n", i, p->goals);
+		fprintf(f, "  \"home_player%d_assists\": %d,\n", i, p->assists);
+		fprintf(f, "  \"home_player%d_season_plus_minus\": %d,\n", i,
+			p->season_plus_minus);
+		fprintf(f, "  \"home_player%d_season_goals\": %d,\n", i,
+			p->season_goals);
+		fprintf(f, "  \"home_player%d_season_assists\": %d,\n", i,
+			p->season_assists);
 	}
 
 	fprintf(f, "  \"period_label_count\": %d",
@@ -2810,35 +2821,40 @@ bool scoreboard_load_state(const char *path)
 
 	g_state.pm_skip_power_play = parse_json_bool(
 		json, "pm_skip_power_play", g_state.pm_skip_power_play);
-	for (int side = 0; side < 2; side++) {
-		bool home = (side == 0);
-		const char *prefix = home ? "home" : "away";
-		char key[64];
-		snprintf(key, sizeof(key), "%s_roster_count", prefix);
-		int rcount = parse_json_int(json, key, -1);
-		if (rcount < 0)
-			continue; /* older state file without a roster */
+	{
+		/* An older state file may have no roster; keep the current one. */
+		int rcount = parse_json_int(json, "home_roster_count", -1);
 		if (rcount > SCOREBOARD_MAX_ROSTER)
 			rcount = SCOREBOARD_MAX_ROSTER;
-		*roster_count_ptr(home) = rcount;
 		for (int i = 0; i < rcount; i++) {
-			struct scoreboard_player *p = &roster_array(home)[i];
-			snprintf(key, sizeof(key), "%s_player%d_number", prefix,
-				 i);
+			struct scoreboard_player *p = &g_state.home_roster[i];
+			char key[64];
+			snprintf(key, sizeof(key), "home_player%d_number", i);
 			p->number = parse_json_int(json, key, 0);
-			snprintf(key, sizeof(key), "%s_player%d_on_ice",
-				 prefix, i);
+			snprintf(key, sizeof(key), "home_player%d_on_ice", i);
 			p->on_ice = parse_json_bool(json, key, false);
-			snprintf(key, sizeof(key), "%s_player%d_plus_minus",
-				 prefix, i);
-			p->plus_minus = parse_json_int(json, key, 0);
-			snprintf(key, sizeof(key), "%s_player%d_goals", prefix,
+			snprintf(key, sizeof(key), "home_player%d_plus_minus",
 				 i);
+			p->plus_minus = parse_json_int(json, key, 0);
+			snprintf(key, sizeof(key), "home_player%d_goals", i);
 			p->goals = parse_json_int(json, key, 0);
-			snprintf(key, sizeof(key), "%s_player%d_assists",
-				 prefix, i);
+			snprintf(key, sizeof(key), "home_player%d_assists", i);
 			p->assists = parse_json_int(json, key, 0);
+			/* No season numbers saved: start from this game. */
+			snprintf(key, sizeof(key),
+				 "home_player%d_season_plus_minus", i);
+			p->season_plus_minus =
+				parse_json_int(json, key, p->plus_minus);
+			snprintf(key, sizeof(key), "home_player%d_season_goals",
+				 i);
+			p->season_goals = parse_json_int(json, key, p->goals);
+			snprintf(key, sizeof(key),
+				 "home_player%d_season_assists", i);
+			p->season_assists =
+				parse_json_int(json, key, p->assists);
 		}
+		if (rcount >= 0)
+			g_state.home_roster_count = rcount;
 	}
 	/* Loaded totals have no matching goal history to reverse. */
 	g_state.pm_event_count = 0;
@@ -2893,14 +2909,10 @@ void scoreboard_new_game(void)
 		g_state.away_penalties[i].phase2_tenths = 0;
 	}
 
-	/* Rosters carry over; on-ice flags, plus/minus, goals and assists start
-   fresh. */
-	scoreboard_roster_clear_on_ice(true);
-	scoreboard_roster_clear_on_ice(false);
-	scoreboard_roster_reset_plus_minus(true);
-	scoreboard_roster_reset_plus_minus(false);
-	scoreboard_roster_reset_scoring(true);
-	scoreboard_roster_reset_scoring(false);
+	/* Rosters carry over; on-ice flags and the game stats start fresh; season
+   stats carry over. */
+	scoreboard_roster_clear_on_ice();
+	scoreboard_roster_reset_game_stats();
 
 	g_state.game_clock_accumulated_tenths = 0;
 	g_state.game_clock_started = false;

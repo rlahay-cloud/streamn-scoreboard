@@ -5,13 +5,13 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- Player plus/minus (+/-) tracking for hockey. Add each team's roster by jersey number, tap players on and off the ice in the dock, and every goal credits +1 to the scoring team's on-ice players and -1 to the other team's on-ice players. Taking a goal back (the score "-" button) reverses its +/- changes.
-- Power-play goals are skipped by default, based on the existing penalty strength tracking. Turn this off from the Roster menu if your league counts them.
-- Four new text files for overlays: `home_plus_minus.txt` and `away_plus_minus.txt` (whole roster, one `#12  +2` line per player) and `home_on_ice.txt` and `away_on_ice.txt` (only the players currently on the ice).
-- Type in exact numbers for a player: right-click a player and choose Edit to set +/-, goals and assists directly.
-- Goals and assists per player. After a goal, a small window asks who scored and who assisted (Skip leaves it blank, and it can be turned off in the Roster menu). Taking the goal back removes its credit. Player buttons show goals and assists, and the Roster menu can credit the last goal later or reset the totals.
-- Three new text files for overlays: `home_scoring.txt` and `away_scoring.txt` (one `#12  1G 2A` line per player with a goal or assist) and `last_goal.txt` (who scored the latest credited goal and who assisted).
-- Rosters, on-ice status and +/- totals are kept across OBS restarts. Starting a New Game clears the +/- totals and the ice but keeps the rosters.
+- Home player stats for hockey. Add your roster by jersey number, tap players on and off the ice, and every goal updates plus/minus (+1 for a home goal, -1 for an away goal) for the players on the ice. Only the home team is tracked.
+- Goals and assists per player. After a home goal, a small window asks who scored and who assisted (Skip leaves it blank, and it can be turned off in the Roster menu). Taking the goal back removes its credit and plus/minus.
+- Game and season totals for plus/minus, goals, assists and points. A Game / Season switch in the dock changes what the rows show. New Game clears the game numbers and keeps the season numbers.
+- Right-click a player and choose Edit to type in exact game and season numbers.
+- Power-play goals are skipped for plus/minus by default, based on the existing penalty strength tracking. Turn this off from the Roster menu.
+- New text files for overlays: `home_plus_minus.txt`, `home_season_plus_minus.txt`, `home_on_ice.txt`, `home_scoring.txt`, `home_season_scoring.txt` and `last_goal.txt`. Columns line up in a fixed-width font.
+- The roster, on-ice status and all numbers are kept across OBS restarts.
 
 ## [0.8.0] - 2026-04-17
 
