@@ -420,6 +420,7 @@ add_core_test(scoreboard_core_persistence_tests tests/test-scoreboard-core-persi
 add_core_test(scoreboard_core_sport_tests tests/test-scoreboard-core-sport.c)
 add_core_test(scoreboard_core_events_tests tests/test-scoreboard-core-events.c)
 add_core_test(scoreboard_core_strength_tests tests/test-scoreboard-core-strength.c)
+add_core_test(scoreboard_core_plusminus_tests tests/test-scoreboard-core-plusminus.c)
 
 if(BUILD_PLUGIN_MODULE)
   set(PLUGIN_BINARY_PATH "$<TARGET_FILE:streamn_obs_scoreboard>")
@@ -469,4 +470,9 @@ add_test(
 add_test(
   NAME scoreboard-core-strength-tests
   COMMAND scoreboard_core_strength_tests
+)
+
+add_test(
+  NAME scoreboard-core-plusminus-tests
+  COMMAND scoreboard_core_plusminus_tests
 )

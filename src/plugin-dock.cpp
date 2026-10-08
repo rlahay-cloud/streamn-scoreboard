@@ -39,6 +39,7 @@
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QHBoxLayout>
+#include <QtWidgets/QInputDialog>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMenu>
@@ -65,6 +66,10 @@ const char *kRecordChaptersKey = "record_chapters";
 const char *kGameClockEnabledKey = "game_clock_enabled";
 const char *kGameClockFormatKey = "game_clock_format";
 const char *kPenaltyLabelFormatKey = "penalty_label_format";
+const char *kHomeRosterKey = "home_roster";
+const char *kAwayRosterKey = "away_roster";
+/* Stored inverted so a missing key keeps the default (power-play goals skipped). */
+const char *kPlusMinusCountPowerPlayKey = "pm_count_power_play_goals";
 
 struct process_job {
 	int id = 0;
@@ -89,6 +94,15 @@ struct penalty_row_widgets {
 	QPushButton *clear_btn = nullptr;
 	int slot = -1;
 	bool home = true;
+};
+
+/* On-ice buttons for one team (plus/minus tracking) */
+struct onice_widgets {
+	QWidget *container = nullptr;
+	QGridLayout *grid = nullptr;
+	QLabel *title = nullptr;
+	QVector<QPushButton *> buttons;
+	QVector<int> numbers;
 };
 
 /* Global state */
@@ -120,6 +134,11 @@ QLabel *g_away_fouls2_label = nullptr;
 QLabel *g_fouls2_center_label = nullptr;
 QWidget *g_penalty_section_widget = nullptr;
 QFrame *g_penalty_separator = nullptr;
+onice_widgets g_home_onice;
+onice_widgets g_away_onice;
+QWidget *g_onice_section_widget = nullptr;
+QFrame *g_onice_separator = nullptr;
+QString g_saved_roster_key;
 QVBoxLayout *g_queue_layout = nullptr;
 QWidget *g_queue_container = nullptr;
 QLabel *g_queue_empty_label = nullptr;
@@ -856,6 +875,171 @@ void run_reeln_highlights_command()
 
 void write_files_now();
 void open_edit_penalty_dialog(QWidget *parent, bool home, int slot);
+void update_all_labels();
+
+/* ---- On ice / plus-minus ---- */
+
+const char *kOnIceButtonStyle =
+	"QPushButton { padding: 2px 4px; min-height: 18px; font-size: 11px; }"
+	"QPushButton:checked { font-weight: bold; }";
+const int kOnIceColumns = 3;
+
+void add_players_from_text(bool home, QString text)
+{
+	text.replace(QLatin1Char(','), QLatin1Char(' '));
+	text.remove(QLatin1Char('#'));
+	const QStringList parts =
+		text.simplified().split(' ', Qt::SkipEmptyParts);
+	for (const QString &part : parts) {
+		bool ok = false;
+		const int number = part.toInt(&ok);
+		if (ok)
+			scoreboard_roster_add(home, number);
+	}
+}
+
+void show_roster_menu(QWidget *parent, QWidget *anchor, bool home)
+{
+	QMenu menu(parent);
+	QAction *add_action = menu.addAction("Add players...");
+	QAction *clear_ice_action = menu.addAction("Clear all from ice");
+	QAction *reset_action = menu.addAction("Reset +/- to zero");
+	QAction *remove_all_action = menu.addAction("Remove all players");
+	menu.addSeparator();
+	QAction *skip_pp_action = menu.addAction("Skip power-play goals");
+	skip_pp_action->setCheckable(true);
+	skip_pp_action->setChecked(scoreboard_get_plus_minus_skip_power_play());
+
+	QAction *chosen =
+		menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+	if (chosen == nullptr)
+		return;
+
+	if (chosen == add_action) {
+		bool ok = false;
+		const QString text = QInputDialog::getText(
+			parent, "Add Players",
+			"Jersey numbers (separated by spaces or commas):",
+			QLineEdit::Normal, QString(), &ok);
+		if (ok)
+			add_players_from_text(home, text);
+	} else if (chosen == clear_ice_action) {
+		scoreboard_roster_clear_on_ice(home);
+	} else if (chosen == reset_action) {
+		if (QMessageBox::question(
+			    parent, "Reset +/-",
+			    "Set every player's +/- on this team back to zero?") ==
+		    QMessageBox::Yes)
+			scoreboard_roster_reset_plus_minus(home);
+	} else if (chosen == remove_all_action) {
+		if (QMessageBox::question(
+			    parent, "Remove All Players",
+			    "Remove every player from this team's roster?") ==
+		    QMessageBox::Yes)
+			scoreboard_roster_clear(home);
+	} else if (chosen == skip_pp_action) {
+		scoreboard_set_plus_minus_skip_power_play(
+			skip_pp_action->isChecked());
+	}
+	write_files_now();
+	update_all_labels();
+}
+
+void show_player_menu(QWidget *button, bool home, int number,
+		      const QPoint &pos)
+{
+	QMenu menu(button);
+	QAction *plus_action = menu.addAction("Add 1 to +/-");
+	QAction *minus_action = menu.addAction("Subtract 1 from +/-");
+	QAction *remove_action = menu.addAction(
+		QString("Remove #%1 from roster").arg(number));
+
+	QAction *chosen = menu.exec(button->mapToGlobal(pos));
+	if (chosen == nullptr)
+		return;
+
+	if (chosen == plus_action)
+		scoreboard_player_adjust_plus_minus(home, number, 1);
+	else if (chosen == minus_action)
+		scoreboard_player_adjust_plus_minus(home, number, -1);
+	else if (chosen == remove_action)
+		scoreboard_roster_remove(home, number);
+	write_files_now();
+	update_all_labels();
+}
+
+void update_onice_team(onice_widgets &w, bool home)
+{
+	if (!w.grid)
+		return;
+
+	const int count = scoreboard_roster_count(home);
+
+	/* Rebuild the buttons only when the roster itself changed. */
+	bool need_rebuild = (w.numbers.size() != count);
+	if (!need_rebuild) {
+		for (int i = 0; i < count; i++) {
+			if (w.numbers[i] !=
+			    scoreboard_roster_get(home, i)->number) {
+				need_rebuild = true;
+				break;
+			}
+		}
+	}
+
+	if (need_rebuild) {
+		for (QPushButton *b : w.buttons) {
+			w.grid->removeWidget(b);
+			b->hide();
+			b->deleteLater();
+		}
+		w.buttons.clear();
+		w.numbers.clear();
+
+		for (int i = 0; i < count; i++) {
+			const int number =
+				scoreboard_roster_get(home, i)->number;
+			QPushButton *btn = new QPushButton(w.container);
+			btn->setCheckable(true);
+			btn->setStyleSheet(kOnIceButtonStyle);
+			btn->setContextMenuPolicy(Qt::CustomContextMenu);
+			QObject::connect(btn, &QPushButton::clicked,
+					 [home, number]() {
+				scoreboard_player_toggle_on_ice(home, number);
+				write_files_now();
+				update_all_labels();
+			});
+			QObject::connect(
+				btn, &QWidget::customContextMenuRequested,
+				[btn, home, number](const QPoint &pos) {
+					show_player_menu(btn, home, number,
+							 pos);
+				});
+			w.grid->addWidget(btn, i / kOnIceColumns,
+					  i % kOnIceColumns);
+			btn->show();
+			w.buttons.push_back(btn);
+			w.numbers.push_back(number);
+		}
+	}
+
+	for (int i = 0; i < count && i < w.buttons.size(); i++) {
+		const struct scoreboard_player *p =
+			scoreboard_roster_get(home, i);
+		char pm[16];
+		scoreboard_format_plus_minus(p->plus_minus, pm, sizeof(pm));
+		w.buttons[i]->setText(QString("#%1  %2")
+					      .arg(p->number)
+					      .arg(QString::fromUtf8(pm)));
+		w.buttons[i]->setChecked(p->on_ice);
+	}
+
+	if (w.title) {
+		w.title->setText(
+			QString(home ? "Home On Ice (%1)" : "Away On Ice (%1)")
+				.arg(scoreboard_roster_on_ice_count(home)));
+	}
+}
 
 /* ---- UI update ---- */
 
@@ -951,6 +1135,18 @@ void update_all_labels()
 	if (g_penalty_separator)
 		g_penalty_separator->setVisible(
 			scoreboard_get_has_penalties());
+	{
+		const bool show_onice =
+			scoreboard_get_sport() == SCOREBOARD_SPORT_HOCKEY;
+		if (g_onice_section_widget)
+			g_onice_section_widget->setVisible(show_onice);
+		if (g_onice_separator)
+			g_onice_separator->setVisible(show_onice);
+		if (show_onice) {
+			update_onice_team(g_home_onice, true);
+			update_onice_team(g_away_onice, false);
+		}
+	}
 	if (g_home_name_edit && !g_home_name_edit->hasFocus())
 		g_home_name_edit->setText(
 			QString::fromUtf8(scoreboard_get_home_name()));
@@ -1214,6 +1410,40 @@ void write_files_now()
 	g_write_cooldown.restart();
 }
 
+/* Rosters (with on-ice flags and +/-) are kept in the OBS profile config so
+   they survive a restart. Saved only when something actually changed. */
+QString current_roster_key(char *home_buf, size_t home_size, char *away_buf,
+			   size_t away_size)
+{
+	scoreboard_roster_to_string(true, home_buf, home_size);
+	scoreboard_roster_to_string(false, away_buf, away_size);
+	return QString::fromUtf8(home_buf) + "|" + QString::fromUtf8(away_buf) +
+	       (scoreboard_get_plus_minus_skip_power_play() ? "|1" : "|0");
+}
+
+void persist_rosters_if_changed()
+{
+	char home_buf[512];
+	char away_buf[512];
+	const QString key = current_roster_key(home_buf, sizeof(home_buf),
+					       away_buf, sizeof(away_buf));
+	if (key == g_saved_roster_key)
+		return;
+
+	config_t *profile_cfg = obs_frontend_get_profile_config();
+	if (profile_cfg == nullptr)
+		return;
+	config_set_string(profile_cfg, kConfigSection, kHomeRosterKey,
+			  home_buf);
+	config_set_string(profile_cfg, kConfigSection, kAwayRosterKey,
+			  away_buf);
+	config_set_bool(profile_cfg, kConfigSection,
+			kPlusMinusCountPowerPlayKey,
+			!scoreboard_get_plus_minus_skip_power_play());
+	config_save_safe(profile_cfg, "tmp", nullptr);
+	g_saved_roster_key = key;
+}
+
 void on_tick()
 {
 	bool was_running = scoreboard_clock_is_running();
@@ -1234,6 +1464,7 @@ void on_tick()
 	if (scoreboard_is_dirty())
 		write_files_now();
 	update_all_labels();
+	persist_rosters_if_changed();
 	if (was_running && !is_running && g_clock_btn)
 		g_clock_btn->repaint();
 }
@@ -1271,6 +1502,21 @@ void load_profile_paths()
 			kPenaltyLabelFormatKey);
 		if (pen_fmt != nullptr && pen_fmt[0] != '\0')
 			scoreboard_set_penalty_label_format(pen_fmt);
+		scoreboard_roster_from_string(
+			true, config_get_string(profile_cfg, kConfigSection,
+						kHomeRosterKey));
+		scoreboard_roster_from_string(
+			false, config_get_string(profile_cfg, kConfigSection,
+						 kAwayRosterKey));
+		scoreboard_set_plus_minus_skip_power_play(!config_get_bool(
+			profile_cfg, kConfigSection,
+			kPlusMinusCountPowerPlayKey));
+		/* What was just loaded is already saved. */
+		char home_buf[512];
+		char away_buf[512];
+		g_saved_roster_key = current_roster_key(
+			home_buf, sizeof(home_buf), away_buf,
+			sizeof(away_buf));
 	}
 
 	scoreboard_set_output_directory(output_dir);
@@ -3271,6 +3517,65 @@ bool scoreboard_dock_init(scoreboard_log_fn log_fn)
 	root->addWidget(g_penalty_section_widget);
 
 	add_separator();
+
+	/* ---- SECTION: On ice / plus-minus (hockey only) ---- */
+	g_onice_section_widget = new QWidget(widget);
+	QHBoxLayout *onice_section = new QHBoxLayout(g_onice_section_widget);
+	onice_section->setContentsMargins(0, 0, 0, 0);
+	onice_section->setSpacing(6);
+
+	auto build_onice_column = [&](onice_widgets &w, bool home) {
+		QVBoxLayout *col = new QVBoxLayout();
+		col->setContentsMargins(0, 0, 0, 0);
+		col->setSpacing(2);
+		w.title = new QLabel(home ? "Home On Ice" : "Away On Ice",
+				     widget);
+		w.title->setStyleSheet(kMutedStyle);
+		w.title->setAlignment(Qt::AlignCenter);
+		col->addWidget(w.title);
+
+		w.container = new QWidget(widget);
+		w.grid = new QGridLayout(w.container);
+		w.grid->setContentsMargins(0, 0, 0, 0);
+		w.grid->setSpacing(2);
+		QScrollArea *scroll = new QScrollArea(widget);
+		scroll->setWidget(w.container);
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		scroll->setMaximumHeight(96);
+		scroll->setHorizontalScrollBarPolicy(
+			Qt::ScrollBarAlwaysOff);
+		col->addWidget(scroll);
+
+		QHBoxLayout *btns = new QHBoxLayout();
+		btns->setContentsMargins(0, 0, 0, 0);
+		btns->setSpacing(2);
+		QPushButton *clear_btn = new QPushButton("Clear Ice", widget);
+		QPushButton *roster_btn = new QPushButton("Roster...", widget);
+		btns->addWidget(clear_btn, 1);
+		btns->addWidget(roster_btn, 1);
+		col->addLayout(btns);
+
+		QObject::connect(clear_btn, &QPushButton::clicked, [home]() {
+			scoreboard_roster_clear_on_ice(home);
+			write_files_now();
+			update_all_labels();
+		});
+		QObject::connect(roster_btn, &QPushButton::clicked,
+				 [widget, roster_btn, home]() {
+			show_roster_menu(widget, roster_btn, home);
+		});
+		return col;
+	};
+	onice_section->addLayout(build_onice_column(g_home_onice, true), 1);
+	onice_section->addLayout(build_onice_column(g_away_onice, false), 1);
+	root->addWidget(g_onice_section_widget);
+
+	g_onice_separator = new QFrame(widget);
+	g_onice_separator->setFrameShape(QFrame::HLine);
+	g_onice_separator->setFrameShadow(QFrame::Sunken);
+	g_onice_separator->setFixedHeight(1);
+	root->addWidget(g_onice_separator);
 
 	/* Highlights generation row: [Generate {Segment} Highlights] [Game Finished] */
 	QHBoxLayout *highlights_row = new QHBoxLayout();

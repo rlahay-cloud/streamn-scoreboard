@@ -49,7 +49,8 @@ Two-layer design separating testable core logic from OBS-dependent code:
 - Penalty edit: `scoreboard_*_penalty_set_time()` changes remaining time; setting to 0 on a compound penalty transitions to phase 2 instead of clearing
 - Penalty label format: configurable template (`{{ number }}`, `{{ time }}`, `{{ phase2 }}`, `{{ if_phase2 }}...{{ end_if }}`) for combined `home_penalty_labels.txt` / `away_penalty_labels.txt` output files
 - Cumulative game clock: opt-in feature tracking total elapsed time across all periods; `game_clock_accumulated_tenths` stores completed period time, `scoreboard_game_clock_get_tenths()` computes live total; configurable display format (MM:SS or H:MM:SS)
-- Text file output: writes 27 files (clock, period, scores, shots, faceoffs, fouls, penalties, penalty labels, period labels, sport, penalty durations, period length, cumulative clock) to configurable directory
+- Text file output: writes 31 files (clock, period, scores, shots, faceoffs, fouls, penalties, penalty labels, period labels, sport, penalty durations, period length, cumulative clock) to configurable directory
+- Player roster and plus/minus: per-team roster (up to `SCOREBOARD_MAX_ROSTER` players by jersey number) with on-ice flags and +/- totals; `scoreboard_increment_*_score()` credits on-ice players (skipping power-play goals when `scoreboard_get_plus_minus_skip_power_play()` is set) and `scoreboard_decrement_*_score()` reverses the most recent matching goal from a bounded history; `scoreboard_roster_to_string()` / `scoreboard_roster_from_string()` give the dock a compact form to keep rosters in the OBS profile config
 - JSON state persistence (save/load), action log ring buffer (64 entries)
 - All exported functions use `scoreboard_*` prefix
 - `scoreboard_reset_state_for_tests()` resets global state between test runs
@@ -67,6 +68,7 @@ Two-layer design separating testable core logic from OBS-dependent code:
 **Dock UI** (`src/plugin-dock.cpp`, `include/scoreboard-dock.h`):
 - C++17 with Qt5/Qt6 (conditional `QAction` include), scoreboard control interface
 - QTimer (100ms) drives clock tick, file writes, and UI updates
+- On-ice section (hockey only): per-team grid of player buttons that toggle on-ice status, plus a Roster menu; rosters are saved to the OBS profile config by `persist_rosters_if_changed()` on each tick
 - 45 OBS hotkeys for hands-free operation (score, shots, faceoffs, fouls, penalties, penalty edit, compound penalties, clock, period)
 - CLI process queue with token expansion (`{event}`, `{home_name}`, `{away_name}`, etc.)
 - Game event timestamps: stream-relative (`timestamps.txt`) for YouTube chapter descriptions; uses cumulative game clock time instead of stream time when game clock is enabled
@@ -76,7 +78,7 @@ Two-layer design separating testable core logic from OBS-dependent code:
 
 ## Testing
 
-Tests are plain C using `assert()` — no external test framework. Six test binaries exercising scoreboard-core:
+Tests are plain C using `assert()` — no external test framework. Seven test binaries exercising scoreboard-core:
 
 - `test-scoreboard-core.c` — clock, period, lifecycle, cumulative game clock
 - `test-scoreboard-core-scoring.c` — score, shots, team names, new game
@@ -84,6 +86,7 @@ Tests are plain C using `assert()` — no external test framework. Six test bina
 - `test-scoreboard-core-persistence.c` — file output, JSON save/load, action logs, CLI settings, game clock persistence, penalty label file output
 - `test-scoreboard-core-sport.c` — sport presets, fouls, score labels
 - `test-scoreboard-core-events.c` — event log add/remove/find/write lifecycle
+- `test-scoreboard-core-plusminus.c` — roster, on-ice flags, goal crediting and reversal, power-play skipping, file output, persistence, roster text form
 
 Each test calls `scoreboard_reset_state_for_tests()` for isolation. Tests run via `ctest --preset default` or `make test`.
 
