@@ -23,6 +23,12 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 - Adding a home penalty picks the player from tick boxes of your roster.
 - Deleting a penalty by hand takes its penalty minutes back off the player.
 - The goal window now allows at most 5 players on the ice.
+- **Today's lineup** (Roster menu): tick who is playing today. Only those players appear in the goal and penalty windows, and only they get a game played at End Game. The lineup is kept from game to game.
+- **Line buttons:** set up forward lines (up to 3 players) and defence pairs (up to 2) in the Roster menu. The goal window then shows F1, F2... and D1, D2... buttons that tick the whole line in one tap. The boxes still start empty for every goal.
+- **Season backup:** Roster menu items to save and load the roster, season numbers, goalies and lines as one file. A copy, `season_backup.txt`, is also written at every End Game.
+- **Reopen Last Game now survives closing OBS.**
+- Goalie time on ice now follows manual clock changes (set the clock, add or subtract seconds or minutes).
+- End Game is now a simple confirmation using today's lineup instead of a list of tick boxes.
 - An away goal while the home team is short-handed ends the first home minor penalty (2 minutes removed, 4 minutes drops to 2, 2+2 moves on). Majors are not ended. Can be turned off.
 
 ## [0.8.0] - 2026-04-17
