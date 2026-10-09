@@ -13,7 +13,7 @@ OBS Studio plugin that tracks live game scoreboard state and writes it to indivi
 ## Features
 
 - **7 sport presets** — hockey, basketball, soccer, football, lacrosse, rugby, and generic
-- **33 text files** updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals and assists (game and season), on-ice players, sport, and more
+- **32 text files** updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals and assists (game and season), on-ice players, sport, and more
 - **Dock UI** with full scoreboard controls in an OBS dock panel
 - **45 OBS hotkeys** for hands-free operation during broadcasts
 - **Penalty tracking** with automatic countdown timers, compound penalties (2+2, 2+5, 2+10), edit/clear per slot (hockey, lacrosse, rugby)
@@ -140,7 +140,6 @@ Set an output directory in the dock settings. The plugin writes these files on e
 | `away_penalty_labels.txt` | Combined penalty number + time (one per line) | `#19  0:22` |
 | `home_plus_minus.txt` | Home roster, +/- this game (one per line) | `#12    +2` |
 | `home_season_plus_minus.txt` | Home roster, +/- for the season | `#12   +14` |
-| `home_on_ice.txt` | Home players ticked as on the ice for the last goal | `#12    +2` |
 | `home_scoring.txt` | Players with a goal or assist this game | `#12   1G  2A  3P` |
 | `home_season_scoring.txt` | Whole roster with season goals, assists and points | `#12   9G 12A 21P` |
 | `last_goal.txt` | Who scored the latest credited goal and who assisted | `Eagles goal: #12 (assists: #7, #9)` |
@@ -156,23 +155,23 @@ Not all files are relevant for every sport — shots are only tracked for hockey
 
 ## Plus/Minus, Goals and Assists
 
-For hockey, the dock has a **Home Players** list under the penalties. The whole roster is always shown, two players per row, with no scrolling. Only your home team's players are tracked. The away team is not.
+For hockey, the dock has one button, **Player Stats / Roster...**. It opens a separate **Home Players** window with the whole roster, two players per row. The window stays open while you work and updates by itself. Only your home team's players are tracked. The away team is not.
 
-1. Click **Roster...** and choose **Add players...**. Type the jersey numbers separated by spaces or commas (for example `4 7 12, 19`). You can add up to 30 players.
-2. Score as usual. After each goal, home or away, a small window asks **who was on the ice**. Tick the players. The boxes start with the players you picked for the last goal, so you only change what moved. Press **OK** to save, or **Skip** to keep the same players as last time.
+1. In the Home Players window, click **Roster...** and choose **Add players...**. Type the jersey numbers separated by spaces or commas (for example `4 7 12, 19`). You can add up to 30 players.
+2. Score as usual. After each goal, home or away, a small window asks **who was on the ice**. Tick the players. Every box starts empty for each new goal, nothing is remembered from the last one. Press **OK** to save, or **Skip** to leave everything alone (nobody gets any +/- for that goal).
 3. For a home goal the same window also asks who scored and who got up to two assists.
 
-Each row reads like `#12    +2   1G  2A  3P` (jersey number, +/-, goals, assists, points). The **Game / Season** switch above the list changes whether the rows show this game or the whole season. Click a row to edit that player.
+Each row in the Home Players window reads like `#12    +2   1G  2A  3P` (jersey number, +/-, goals, assists, points). The **Game / Season** switch at the top changes whether the rows show this game or the whole season. Click a row to edit that player.
 
 - **Plus/minus:** a home goal gives +1 to the players you ticked, and an away goal gives them -1.
-- **No +/- during penalties:** if any penalty is active on either team when a goal is scored (power play, shorthanded or 4 on 4), nobody gets a +/- for that goal. Goals, assists and the score still count. You can turn this rule off with **Roster... > No +/- for goals during penalties**.
+- **No +/- during penalties:** if any penalty is active on either team when a goal is scored (power play, shorthanded or 4 on 4), nobody gets a +/- for that goal. Goals, assists and the score still count. The goal window tells you when this happens. You can turn this rule off with **Roster... > No +/- for goals during penalties**.
 - **Game numbers** start at zero for each game (**New Game** clears them but keeps the roster).
 - **Season numbers** keep adding up from game to game. Anything that changes a game number (a goal, or an edit) changes the season number by the same amount. Use **Roster... > Reset season totals (new season)** when a new season starts.
 - **Manual changes:** click a player (or right-click for more) and choose **Edit** to type in exact game and season +/-, goals and assists. If you only change a game number, the season number follows. If you type a season number, it is used as typed.
-- **Fixing a goal later:** **Roster... > Last home goal...** and **Last away goal...** reopen the window for the most recent goal, so you can change who was on the ice (and who scored). The +/- moves to the right players. You can turn the window off with **Roster... > Ask about each goal**.
+- **Fixing a goal later:** **Roster... > Last home goal...** and **Last away goal...** reopen the window for the most recent goal. The on-ice boxes show who was already named, so you can change them and the +/- moves to the right players. Leave scorer and assists on "(nobody)" to keep the credit already there. You can turn the window off with **Roster... > Ask about each goal**.
 - Taking a goal back with the score "-" button removes its credit and +/- changes. Typing a score in directly, or editing the score files, cannot be matched to earlier goals, so those are not reversed.
 - The roster and all numbers are remembered when you restart OBS.
-- For your overlay, point a Text source at `home_plus_minus.txt` or `home_season_plus_minus.txt` for the whole roster, `home_on_ice.txt` for the players ticked for the last goal, `home_scoring.txt` for this game's goals and assists, `home_season_scoring.txt` for the whole roster's season points, or `last_goal.txt` for a "who just scored" line. Use a fixed-width font (like Consolas or Courier New) in the Text source so the columns line up.
+- For your overlay, point a Text source at `home_plus_minus.txt` or `home_season_plus_minus.txt` for the whole roster, `home_scoring.txt` for this game's goals and assists, `home_season_scoring.txt` for the whole roster's season points, or `last_goal.txt` for a "who just scored" line. Use a fixed-width font (like Consolas or Courier New) in the Text source so the columns line up.
 
 ## Hotkeys
 

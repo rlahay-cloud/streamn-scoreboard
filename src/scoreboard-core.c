@@ -518,43 +518,6 @@ bool scoreboard_roster_find(int number)
 	return roster_index(number) >= 0;
 }
 
-bool scoreboard_player_set_on_ice(int number, bool on_ice)
-{
-	struct scoreboard_player *p = roster_lookup(number);
-	if (p == NULL)
-		return false;
-	p->on_ice = on_ice;
-	mark_dirty();
-	return true;
-}
-
-bool scoreboard_player_toggle_on_ice(int number)
-{
-	struct scoreboard_player *p = roster_lookup(number);
-	if (p == NULL)
-		return false;
-	p->on_ice = !p->on_ice;
-	mark_dirty();
-	return true;
-}
-
-void scoreboard_roster_clear_on_ice(void)
-{
-	for (int i = 0; i < g_state.home_roster_count; i++)
-		g_state.home_roster[i].on_ice = false;
-	mark_dirty();
-}
-
-int scoreboard_roster_on_ice_count(void)
-{
-	int on_ice = 0;
-	for (int i = 0; i < g_state.home_roster_count; i++) {
-		if (g_state.home_roster[i].on_ice)
-			on_ice++;
-	}
-	return on_ice;
-}
-
 /* Change a game stat and the season stat together. Goals and assists never
    drop below zero in either place. */
 static void player_add_plus_minus(struct scoreboard_player *p, int delta)
@@ -702,8 +665,7 @@ static bool append_line(char *buf, size_t size, size_t *len, const char *line)
 
 /* One line per player: "#12  +2" with right-aligned numbers so the columns
    line up in a monospaced font. */
-void scoreboard_format_plus_minus_lines(bool all, bool season, char *buf,
-					size_t size)
+void scoreboard_format_plus_minus_lines(bool season, char *buf, size_t size)
 {
 	if (size == 0)
 		return;
@@ -711,8 +673,6 @@ void scoreboard_format_plus_minus_lines(bool all, bool season, char *buf,
 	size_t len = 0;
 	for (int i = 0; i < g_state.home_roster_count; i++) {
 		const struct scoreboard_player *p = &g_state.home_roster[i];
-		if (!all && !p->on_ice)
-			continue;
 		char pm[16];
 		char line[48];
 		scoreboard_format_plus_minus(
@@ -755,8 +715,10 @@ void scoreboard_roster_to_string(char *buf, size_t size)
 	for (int i = 0; i < g_state.home_roster_count; i++) {
 		const struct scoreboard_player *p = &g_state.home_roster[i];
 		char item[96];
+		/* The second slot used to hold an on-ice flag. It is always 0
+		   now but kept so older and newer saves read the same way. */
 		snprintf(item, sizeof(item), "%d:%d:%d:%d:%d:%d:%d:%d",
-			 p->number, p->on_ice ? 1 : 0, p->plus_minus, p->goals,
+			 p->number, 0, p->plus_minus, p->goals,
 			 p->assists, p->season_plus_minus, p->season_goals,
 			 p->season_assists);
 		size_t item_len = strlen(item);
@@ -781,7 +743,8 @@ void scoreboard_roster_from_string(const char *text)
 	while (*p != '\0') {
 		char *end = NULL;
 		long number = strtol(p, &end, 10);
-		/* on_ice, +/-, goals, assists, then season +/-, goals, assists.
+		/* (unused slot), +/-, goals, assists, then season +/-, goals,
+		   assists.
 		   Older saves have fewer fields. */
 		long fields[7] = {0, 0, 0, 0, 0, 0, 0};
 		int read = 0;
@@ -802,7 +765,6 @@ void scoreboard_roster_from_string(const char *text)
 			if (slot >= 0) {
 				struct scoreboard_player *player =
 					&g_state.home_roster[slot];
-				player->on_ice = (fields[0] != 0);
 				player->plus_minus = (int)fields[1];
 				player->goals = clamp_zero((int)fields[2]);
 				player->assists = clamp_zero((int)fields[3]);
@@ -921,16 +883,6 @@ bool scoreboard_get_last_goal(int *scorer, int *assist1, int *assist2)
 bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
 				int count)
 {
-	for (int i = 0; i < g_state.home_roster_count; i++) {
-		struct scoreboard_player *p = &g_state.home_roster[i];
-		p->on_ice = false;
-		for (int j = 0; j < count; j++) {
-			if (numbers[j] == p->number)
-				p->on_ice = true;
-		}
-	}
-	mark_dirty();
-
 	int idx = latest_goal_event(home_scored);
 	if (idx < 0)
 		return false;
@@ -943,15 +895,46 @@ bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
 	}
 	ev->count = 0;
 	if (!ev->skipped) {
-		for (int i = 0; i < g_state.home_roster_count; i++) {
-			struct scoreboard_player *p = &g_state.home_roster[i];
-			if (!p->on_ice)
+		for (int i = 0; i < count; i++) {
+			struct scoreboard_player *p = roster_lookup(numbers[i]);
+			bool seen = false;
+			for (int j = 0; j < ev->count; j++) {
+				if (ev->numbers[j] == numbers[i])
+					seen = true;
+			}
+			if (p == NULL || seen)
 				continue;
 			player_add_plus_minus(p, delta);
 			ev->numbers[ev->count++] = p->number;
 		}
+		if (ev->count > 0) {
+			char msg[SCOREBOARD_ACTION_LOG_ENTRY_SIZE];
+			snprintf(msg, sizeof(msg),
+				 "Plus/minus: %+d for %d on-ice players", delta,
+				 ev->count);
+			scoreboard_add_action_log(msg);
+		}
 	}
+	mark_dirty();
 	return true;
+}
+
+int scoreboard_get_goal_on_ice(bool home_scored, int *numbers, int max)
+{
+	int idx = latest_goal_event(home_scored);
+	if (idx < 0)
+		return 0;
+	const struct pm_event *ev = &g_state.pm_events[idx];
+	int n = ev->count < max ? ev->count : max;
+	for (int i = 0; i < n; i++)
+		numbers[i] = ev->numbers[i];
+	return n;
+}
+
+bool scoreboard_goal_has_no_plus_minus(bool home_scored)
+{
+	int idx = latest_goal_event(home_scored);
+	return idx >= 0 && g_state.pm_events[idx].skipped;
 }
 
 void scoreboard_format_last_goal(char *buf, size_t size)
@@ -975,8 +958,9 @@ void scoreboard_format_last_goal(char *buf, size_t size)
 			 a1 >= 0 ? a1 : a2);
 }
 
-/* A home goal gives +1 to the home players on the ice, an away goal gives
-   them -1. The numbers are kept so the goal can be taken back later. */
+/* A goal is remembered so plus/minus can be given to the players who were on
+   the ice (scoreboard_set_goal_on_ice) and reversed if the goal is taken
+   back. Nobody gets plus/minus until the on-ice players are named. */
 static void pm_record_goal(bool home_scored)
 {
 	struct pm_event ev;
@@ -985,25 +969,7 @@ static void pm_record_goal(bool home_scored)
 	ev.scorer = -1;
 	ev.assist1 = -1;
 	ev.assist2 = -1;
-
 	ev.skipped = g_state.pm_skip_power_play && pm_penalty_active();
-	if (!ev.skipped) {
-		int delta = home_scored ? 1 : -1;
-		for (int i = 0; i < g_state.home_roster_count; i++) {
-			struct scoreboard_player *p = &g_state.home_roster[i];
-			if (!p->on_ice)
-				continue;
-			player_add_plus_minus(p, delta);
-			ev.numbers[ev.count++] = p->number;
-		}
-		if (ev.count > 0) {
-			char msg[SCOREBOARD_ACTION_LOG_ENTRY_SIZE];
-			snprintf(msg, sizeof(msg),
-				 "Plus/minus: %+d for %d on-ice players", delta,
-				 ev.count);
-			scoreboard_add_action_log(msg);
-		}
-	}
 	pm_push_event(&ev);
 }
 
@@ -2471,16 +2437,13 @@ bool scoreboard_write_all_files(void)
 
 	{
 		char pm_buf[1024];
-		scoreboard_format_plus_minus_lines(true, false, pm_buf,
+		scoreboard_format_plus_minus_lines(false, pm_buf,
 						   sizeof(pm_buf));
 		ok = write_text_file(dir, "home_plus_minus.txt", pm_buf) && ok;
-		scoreboard_format_plus_minus_lines(true, true, pm_buf,
+		scoreboard_format_plus_minus_lines(true, pm_buf,
 						   sizeof(pm_buf));
 		ok = write_text_file(dir, "home_season_plus_minus.txt",
 				     pm_buf) && ok;
-		scoreboard_format_plus_minus_lines(false, false, pm_buf,
-						   sizeof(pm_buf));
-		ok = write_text_file(dir, "home_on_ice.txt", pm_buf) && ok;
 		scoreboard_format_scoring_lines(false, pm_buf, sizeof(pm_buf));
 		ok = write_text_file(dir, "home_scoring.txt", pm_buf) && ok;
 		scoreboard_format_scoring_lines(true, pm_buf, sizeof(pm_buf));
@@ -2711,8 +2674,6 @@ bool scoreboard_save_state(const char *path)
 	for (int i = 0; i < g_state.home_roster_count; i++) {
 		const struct scoreboard_player *p = &g_state.home_roster[i];
 		fprintf(f, "  \"home_player%d_number\": %d,\n", i, p->number);
-		fprintf(f, "  \"home_player%d_on_ice\": %s,\n", i,
-			p->on_ice ? "true" : "false");
 		fprintf(f, "  \"home_player%d_plus_minus\": %d,\n", i,
 			p->plus_minus);
 		fprintf(f, "  \"home_player%d_goals\": %d,\n", i, p->goals);
@@ -2872,8 +2833,6 @@ bool scoreboard_load_state(const char *path)
 			char key[64];
 			snprintf(key, sizeof(key), "home_player%d_number", i);
 			p->number = parse_json_int(json, key, 0);
-			snprintf(key, sizeof(key), "home_player%d_on_ice", i);
-			p->on_ice = parse_json_bool(json, key, false);
 			snprintf(key, sizeof(key), "home_player%d_plus_minus",
 				 i);
 			p->plus_minus = parse_json_int(json, key, 0);
@@ -2950,9 +2909,8 @@ void scoreboard_new_game(void)
 		g_state.away_penalties[i].phase2_tenths = 0;
 	}
 
-	/* Rosters carry over; on-ice flags and the game stats start fresh; season
+	/* Rosters carry over; the game stats start fresh; season
    stats carry over. */
-	scoreboard_roster_clear_on_ice();
 	scoreboard_roster_reset_game_stats();
 
 	g_state.game_clock_accumulated_tenths = 0;
