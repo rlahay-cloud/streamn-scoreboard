@@ -324,8 +324,8 @@ void scoreboard_roster_reset_game_stats(void);
 /* Zero every player's season values (game values stay). */
 void scoreboard_roster_reset_season_stats(void);
 
-/* When true (default), goals scored while the scoring team has more players
- * on the ice than the opponent (power play) do not change plus/minus. */
+/* When true (default), goals scored while a penalty is active on either team
+ * do not change plus/minus for anyone. */
 void scoreboard_set_plus_minus_skip_power_play(bool skip);
 bool scoreboard_get_plus_minus_skip_power_play(void);
 
@@ -335,6 +335,13 @@ bool scoreboard_get_plus_minus_skip_power_play(void);
  * removes it. Returns false, changing nothing, if a number is not on the
  * roster or the same player is named twice. */
 bool scoreboard_credit_goal(int scorer, int assist1, int assist2);
+/* Say who was on the ice for the latest goal by a team (home_scored = true
+ * for a home goal). The listed jersey numbers become the on-ice players, and
+ * the +/- from that goal is moved to them (unless the goal was skipped
+ * because of a penalty). Returns false if no such goal is in the history; the
+ * on-ice players are still set. Pass count = 0 for nobody. */
+bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
+				int count);
 /* Who got the latest credited goal still in the history; false if none. */
 bool scoreboard_get_last_goal(int *scorer, int *assist1, int *assist2);
 /* "Eagles goal: #12 (assists: #7, #9)"; empty if no credited goal. */
@@ -354,7 +361,8 @@ void scoreboard_format_plus_minus(int value, char *buf, size_t size);
  * (all=false), separated by newlines. season=true uses season values. */
 void scoreboard_format_plus_minus_lines(bool all, bool season, char *buf,
 					size_t size);
-/* One "#12   1G  2A  3P" line per player with at least one goal or assist. */
+/* One "#12   1G  2A  3P" line per player. The game list only has players
+ * with a goal or assist; the season list (season=true) has everyone. */
 void scoreboard_format_scoring_lines(bool season, char *buf, size_t size);
 
 /* Action log */

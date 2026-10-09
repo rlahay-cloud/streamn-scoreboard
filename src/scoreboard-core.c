@@ -22,6 +22,7 @@ struct pm_event {
 	int scorer;  /* credited jersey numbers (home goals only), -1 when nobody */
 	int assist1;
 	int assist2;
+	bool skipped; /* no +/- because a penalty was active */
 	int count;   /* home players who got +1 (home goal) or -1 (away goal) */
 	int numbers[SCOREBOARD_MAX_ROSTER];
 };
@@ -723,7 +724,8 @@ void scoreboard_format_plus_minus_lines(bool all, bool season, char *buf,
 	}
 }
 
-/* One "#12  1G  2A  3P" line per player with at least one goal or assist. */
+/* One "#12   1G  2A  3P" line per player. The game list only has players with
+   at least one goal or assist; the season list has the whole roster. */
 void scoreboard_format_scoring_lines(bool season, char *buf, size_t size)
 {
 	if (size == 0)
@@ -734,7 +736,7 @@ void scoreboard_format_scoring_lines(bool season, char *buf, size_t size)
 		const struct scoreboard_player *p = &g_state.home_roster[i];
 		int goals = season ? p->season_goals : p->goals;
 		int assists = season ? p->season_assists : p->assists;
-		if (goals == 0 && assists == 0)
+		if (!season && goals == 0 && assists == 0)
 			continue;
 		char line[64];
 		snprintf(line, sizeof(line), "#%-3d %2dG %2dA %2dP", p->number,
@@ -824,13 +826,16 @@ void scoreboard_roster_from_string(const char *text)
 	}
 }
 
-/* A goal is a power-play goal when the scoring team has more players on the
-   ice than the opponent, based on the penalty (or card) strength tracking. */
-static bool pm_is_power_play_goal(bool home_scored)
+/* No plus/minus is given for any goal scored while a penalty is active on
+   either team (when the "skip" setting is on, which is the default). */
+static bool pm_penalty_active(void)
 {
-	int home = scoreboard_get_home_strength();
-	int away = scoreboard_get_away_strength();
-	return home_scored ? home > away : away > home;
+	for (int i = 0; i < SCOREBOARD_PENALTY_SLOTS; i++) {
+		if (g_state.home_penalties[i].active ||
+		    g_state.away_penalties[i].active)
+			return true;
+	}
+	return false;
 }
 
 static void pm_push_event(const struct pm_event *ev)
@@ -864,10 +869,10 @@ static void credit_apply(int scorer, int assist1, int assist2, int delta)
 	}
 }
 
-static int credit_latest_home_event(void)
+static int latest_goal_event(bool home_scored)
 {
 	for (int i = g_state.pm_event_count - 1; i >= 0; i--) {
-		if (g_state.pm_events[i].home_scored)
+		if (g_state.pm_events[i].home_scored == home_scored)
 			return i;
 	}
 	return -1;
@@ -886,7 +891,7 @@ bool scoreboard_credit_goal(int scorer, int assist1, int assist2)
 				return false;
 		}
 	}
-	int idx = credit_latest_home_event();
+	int idx = latest_goal_event(true);
 	if (idx >= 0) {
 		struct pm_event *ev = &g_state.pm_events[idx];
 		credit_apply(ev->scorer, ev->assist1, ev->assist2, -1);
@@ -911,6 +916,42 @@ bool scoreboard_get_last_goal(int *scorer, int *assist1, int *assist2)
 		return true;
 	}
 	return false;
+}
+
+bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
+				int count)
+{
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		struct scoreboard_player *p = &g_state.home_roster[i];
+		p->on_ice = false;
+		for (int j = 0; j < count; j++) {
+			if (numbers[j] == p->number)
+				p->on_ice = true;
+		}
+	}
+	mark_dirty();
+
+	int idx = latest_goal_event(home_scored);
+	if (idx < 0)
+		return false;
+	struct pm_event *ev = &g_state.pm_events[idx];
+	const int delta = home_scored ? 1 : -1;
+	for (int i = 0; i < ev->count; i++) {
+		struct scoreboard_player *p = roster_lookup(ev->numbers[i]);
+		if (p != NULL)
+			player_add_plus_minus(p, -delta);
+	}
+	ev->count = 0;
+	if (!ev->skipped) {
+		for (int i = 0; i < g_state.home_roster_count; i++) {
+			struct scoreboard_player *p = &g_state.home_roster[i];
+			if (!p->on_ice)
+				continue;
+			player_add_plus_minus(p, delta);
+			ev->numbers[ev->count++] = p->number;
+		}
+	}
+	return true;
 }
 
 void scoreboard_format_last_goal(char *buf, size_t size)
@@ -945,8 +986,8 @@ static void pm_record_goal(bool home_scored)
 	ev.assist1 = -1;
 	ev.assist2 = -1;
 
-	if (!(g_state.pm_skip_power_play &&
-	      pm_is_power_play_goal(home_scored))) {
+	ev.skipped = g_state.pm_skip_power_play && pm_penalty_active();
+	if (!ev.skipped) {
 		int delta = home_scored ? 1 : -1;
 		for (int i = 0; i < g_state.home_roster_count; i++) {
 			struct scoreboard_player *p = &g_state.home_roster[i];

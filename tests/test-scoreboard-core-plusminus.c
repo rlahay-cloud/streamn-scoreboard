@@ -183,33 +183,37 @@ static void test_goal_with_nobody_on_ice_or_no_roster(void)
 	assert(scoreboard_get_home_score() == 1);
 }
 
-static void test_power_play_goals_skipped_by_default(void)
+static void test_no_plus_minus_while_a_penalty_is_active(void)
 {
 	setup_roster();
 	assert(scoreboard_get_plus_minus_skip_power_play());
 	scoreboard_player_set_on_ice(10, true);
-	/* Away is shorthanded, so a home goal is a power-play goal. */
+
+	/* away penalty: a home goal gives nothing */
 	scoreboard_away_penalty_add(22, 120);
 	scoreboard_increment_home_score();
 	assert(scoreboard_player_get_plus_minus(10) == 0);
 	scoreboard_away_penalty_clear(0);
 
-	/* Home is shorthanded, so an away goal is a power-play goal. */
+	/* home penalty: an away goal gives nothing */
 	scoreboard_home_penalty_add(12, 120);
 	scoreboard_increment_away_score();
 	assert(scoreboard_player_get_plus_minus(10) == 0);
-}
 
-static void test_shorthanded_and_even_strength_goals_count(void)
-{
-	setup_roster();
-	scoreboard_player_set_on_ice(10, true);
-	scoreboard_home_penalty_add(12, 120);
-	scoreboard_increment_home_score(); /* shorthanded goal */
-	assert(scoreboard_player_get_plus_minus(10) == 1);
-	scoreboard_away_penalty_add(22, 120); /* 4 on 4 */
+	/* a shorthanded goal gives nothing either */
+	scoreboard_increment_home_score();
+	assert(scoreboard_player_get_plus_minus(10) == 0);
+
+	/* matching penalties (4 on 4) give nothing */
+	scoreboard_away_penalty_add(22, 120);
 	scoreboard_increment_away_score();
 	assert(scoreboard_player_get_plus_minus(10) == 0);
+
+	/* once every penalty is over, goals count again */
+	scoreboard_home_penalty_clear(0);
+	scoreboard_away_penalty_clear(0);
+	scoreboard_increment_home_score();
+	assert(scoreboard_player_get_plus_minus(10) == 1);
 }
 
 static void test_power_play_goals_count_when_skip_disabled(void)
@@ -631,7 +635,7 @@ static void test_scoring_lines(void)
 	scoreboard_format_scoring_lines(false, buf, sizeof(buf));
 	assert(strcmp(buf, "#10   2G  0A  2P\n#12   0G  1A  1P") == 0);
 	scoreboard_format_scoring_lines(true, buf, sizeof(buf));
-	assert(strcmp(buf, "#10   2G  0A  2P\n#12   5G  7A 12P") == 0);
+	assert(strcmp(buf, "#10   2G  0A  2P\n#11   0G  0A  0P\n#12   5G  7A 12P") == 0);
 	scoreboard_format_scoring_lines(false, buf, 25);
 	assert(strcmp(buf, "#10   2G  0A  2P") == 0);
 }
@@ -654,7 +658,7 @@ static void test_files_written(void)
 	expect_file("home_on_ice.txt", "#10    +1");
 	expect_file("home_scoring.txt", "#10   1G  0A  1P\n#11   0G  1A  1P");
 	expect_file("home_season_scoring.txt",
-		    "#10   3G  4A  7P\n#11   0G  1A  1P");
+		    "#10   3G  4A  7P\n#11   0G  1A  1P\n#12   0G  0A  0P");
 	expect_file("last_goal.txt", "Eagles goal: #10 (assist: #11)");
 	cleanup_tmp_dir();
 }
@@ -852,6 +856,84 @@ static void test_load_older_state_files(void)
 	cleanup_tmp_dir();
 }
 
+/* ---- who was on the ice ---- */
+
+static void test_set_goal_on_ice_moves_plus_minus(void)
+{
+	int now[2] = {11, 12};
+	setup_roster();
+	scoreboard_player_set_on_ice(10, true);
+	scoreboard_increment_home_score();
+	assert(player(10)->plus_minus == 1);
+
+	assert(scoreboard_set_goal_on_ice(true, now, 2));
+	assert(player(10)->plus_minus == 0 && !player(10)->on_ice);
+	assert(player(11)->plus_minus == 1 && player(11)->on_ice);
+	assert(player(12)->plus_minus == 1 && player(12)->season_plus_minus == 1);
+
+	/* taking the goal back reverses the corrected players */
+	scoreboard_decrement_home_score();
+	assert(player(11)->plus_minus == 0 && player(12)->plus_minus == 0);
+	assert(player(10)->plus_minus == 0);
+}
+
+static void test_set_goal_on_ice_for_away_goal(void)
+{
+	int now[1] = {10};
+	setup_roster();
+	scoreboard_player_set_on_ice(12, true);
+	scoreboard_increment_away_score();
+	assert(player(12)->plus_minus == -1);
+	assert(scoreboard_set_goal_on_ice(false, now, 1));
+	assert(player(12)->plus_minus == 0);
+	assert(player(10)->plus_minus == -1);
+	/* a home goal in between is left alone */
+	scoreboard_increment_home_score();
+	assert(player(10)->plus_minus == 0);
+	/* the away goal had nobody on ice after all: only the home goal's +1 stays */
+	assert(scoreboard_set_goal_on_ice(false, now, 0));
+	assert(player(10)->plus_minus == 1 && !player(10)->on_ice);
+}
+
+static void test_set_goal_on_ice_nobody(void)
+{
+	setup_roster();
+	scoreboard_player_set_on_ice(10, true);
+	scoreboard_increment_home_score();
+	assert(scoreboard_set_goal_on_ice(true, NULL, 0));
+	assert(player(10)->plus_minus == 0);
+	assert(scoreboard_roster_on_ice_count() == 0);
+}
+
+static void test_set_goal_on_ice_keeps_penalty_rule(void)
+{
+	int now[1] = {10};
+	setup_roster();
+	scoreboard_away_penalty_add(22, 120);
+	scoreboard_increment_home_score();
+	assert(scoreboard_set_goal_on_ice(true, now, 1));
+	assert(player(10)->on_ice && player(10)->plus_minus == 0);
+	scoreboard_decrement_home_score();
+	assert(player(10)->plus_minus == 0);
+}
+
+static void test_set_goal_on_ice_without_goal_and_unknown_player(void)
+{
+	int now[2] = {10, 99};
+	setup_roster();
+	assert(!scoreboard_set_goal_on_ice(true, now, 2));
+	assert(player(10)->on_ice);
+	assert(scoreboard_roster_on_ice_count() == 1);
+	assert(player(10)->plus_minus == 0);
+
+	/* a player removed from the roster after the goal is skipped */
+	scoreboard_increment_home_score();
+	scoreboard_roster_remove(10);
+	int again[1] = {11};
+	assert(scoreboard_set_goal_on_ice(true, again, 1));
+	assert(player(11)->plus_minus == 1);
+}
+
 int main(void)
 {
 	test_roster_add_get_remove_clear();
@@ -862,8 +944,7 @@ int main(void)
 	test_home_goal_gives_plus_one_to_on_ice();
 	test_away_goal_gives_minus_one_to_on_ice();
 	test_goal_with_nobody_on_ice_or_no_roster();
-	test_power_play_goals_skipped_by_default();
-	test_shorthanded_and_even_strength_goals_count();
+	test_no_plus_minus_while_a_penalty_is_active();
 	test_power_play_goals_count_when_skip_disabled();
 	test_goal_adds_action_log_entry();
 
@@ -890,6 +971,12 @@ int main(void)
 	test_removing_goal_never_goes_below_zero();
 	test_credit_goal_without_recorded_goal();
 	test_last_goal_and_format();
+
+	test_set_goal_on_ice_moves_plus_minus();
+	test_set_goal_on_ice_for_away_goal();
+	test_set_goal_on_ice_nobody();
+	test_set_goal_on_ice_keeps_penalty_rule();
+	test_set_goal_on_ice_without_goal_and_unknown_player();
 
 	test_format_plus_minus_values();
 	test_plus_minus_lines();
