@@ -74,6 +74,9 @@ const char *kHomeRosterKey = "home_roster";
 const char *kPlusMinusCountPowerPlayKey = "pm_count_power_play_goals";
 /* Stored inverted so that "ask who scored" is on unless turned off. */
 const char *kSkipScorerPromptKey = "skip_scorer_prompt";
+const char *kHomeGoaliesKey = "home_goalies";
+/* Stored inverted so the "away goal ends a home minor" rule is on by default. */
+const char *kKeepPenaltyOnAwayGoalKey = "keep_penalty_on_away_goal";
 
 struct process_job {
 	int id = 0;
@@ -141,6 +144,11 @@ QFrame *g_penalty_separator = nullptr;
 onice_widgets g_home_onice;
 QWidget *g_onice_section_widget = nullptr;
 QDialog *g_stats_dialog = nullptr;
+QComboBox *g_goalie_combo = nullptr;
+QWidget *g_goalie_container = nullptr;
+QVBoxLayout *g_goalie_rows = nullptr;
+QVector<QPushButton *> g_goalie_buttons;
+QVector<int> g_goalie_numbers;
 QFrame *g_onice_separator = nullptr;
 QString g_saved_roster_key;
 QVBoxLayout *g_queue_layout = nullptr;
@@ -975,7 +983,8 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 		note->setStyleSheet("font-size: 10px; color: gray;");
 		layout->addWidget(note);
 	}
-	layout->addWidget(new QLabel("Who was on the ice?", &dialog));
+	QLabel *ice_label = new QLabel("Who was on the ice?", &dialog);
+	layout->addWidget(ice_label);
 	std::vector<int> already(SCOREBOARD_MAX_ROSTER);
 	const int already_count = scoreboard_get_goal_on_ice(
 		home, already.data(), SCOREBOARD_MAX_ROSTER);
@@ -995,6 +1004,35 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 		ice_boxes.push_back(box);
 	}
 	layout->addLayout(ice_grid);
+
+	/* No more than 5 players can be on the ice. */
+	auto ice_count = [ice_boxes]() {
+		int n = 0;
+		for (QCheckBox *b : ice_boxes) {
+			if (b->isChecked())
+				n++;
+		}
+		return n;
+	};
+	for (QCheckBox *box : ice_boxes) {
+		QObject::connect(box, &QCheckBox::toggled,
+				 [box, ice_count, ice_label](bool on) {
+			if (on && ice_count() > SCOREBOARD_MAX_ON_ICE) {
+				QSignalBlocker block(box);
+				box->setChecked(false);
+				ice_label->setText(
+					"Only 5 players can be on the ice. Untick someone first.");
+				return;
+			}
+			ice_label->setText(
+				QString("Who was on the ice? (%1 of %2)")
+					.arg(ice_count())
+					.arg(SCOREBOARD_MAX_ON_ICE));
+		});
+	}
+	ice_label->setText(QString("Who was on the ice? (%1 of %2)")
+				   .arg(ice_count())
+				   .arg(SCOREBOARD_MAX_ON_ICE));
 
 	/* A scorer or assist was on the ice, so picking one ticks their box. */
 	auto tick_on_ice = [ice_boxes](QComboBox *combo) {
@@ -1041,6 +1079,22 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 			tick_on_ice(scorer);
 			tick_on_ice(assist1);
 			tick_on_ice(assist2);
+			bool all_on_ice = true;
+			for (QComboBox *combo : {scorer, assist1, assist2}) {
+				const int number = combo->currentData().toInt();
+				for (QCheckBox *box : ice_boxes) {
+					if (number >= 0 &&
+					    box->property("number").toInt() == number &&
+					    !box->isChecked())
+						all_on_ice = false;
+				}
+			}
+			if (!all_on_ice) {
+				QMessageBox::warning(
+					&dialog, "Goal",
+					"5 players are already on the ice. Untick someone so the scorer and assists can be added.");
+				continue;
+			}
 		}
 		std::vector<int> on_ice;
 		for (QCheckBox *box : ice_boxes) {
@@ -1077,6 +1131,7 @@ void edit_player_stats(QWidget *parent, int number)
 	const int old_season_pm = p->season_plus_minus;
 	const int old_season_goals = p->season_goals;
 	const int old_season_assists = p->season_assists;
+	const int old_season_pim = p->season_pim;
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(QString("Edit #%1").arg(number));
@@ -1102,8 +1157,87 @@ void edit_player_stats(QWidget *parent, int number)
 	grid->addWidget(new QLabel("Assists:", &dialog), 3, 0);
 	grid->addWidget(game_assists, 3, 1);
 	grid->addWidget(season_assists, 3, 2);
+	QSpinBox *game_pim = make_stat_spin(&dialog, 0, 999, p->pim);
+	QSpinBox *season_pim =
+		make_stat_spin(&dialog, 0, 9999, old_season_pim);
+	QSpinBox *games = make_stat_spin(&dialog, 0, 999, p->games);
+	grid->addWidget(new QLabel("Penalty minutes:", &dialog), 4, 0);
+	grid->addWidget(game_pim, 4, 1);
+	grid->addWidget(season_pim, 4, 2);
+	grid->addWidget(new QLabel("Games played:", &dialog), 5, 0);
+	grid->addWidget(games, 5, 2);
 	QLabel *note = new QLabel(
 		"Changing a game number also moves the season number by the same amount.",
+		&dialog);
+	note->setWordWrap(true);
+	note->setStyleSheet("font-size: 10px; color: gray;");
+	grid->addWidget(note, 6, 0, 1, 3);
+	QDialogButtonBox *buttons = new QDialogButtonBox(
+		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+	grid->addWidget(buttons, 7, 0, 1, 3);
+	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
+			 &QDialog::accept);
+	QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
+			 &QDialog::reject);
+	if (dialog.exec() != QDialog::Accepted)
+		return;
+
+	scoreboard_player_set_plus_minus(number, game_pm->value());
+	scoreboard_player_set_goals(number, game_goals->value());
+	scoreboard_player_set_assists(number, game_assists->value());
+	scoreboard_player_set_pim(number, game_pim->value());
+	scoreboard_player_set_games(number, games->value());
+	if (season_pim->value() != old_season_pim)
+		scoreboard_player_set_season_pim(number, season_pim->value());
+	/* Season numbers typed here win over the shift from the game edit. */
+	if (season_pm->value() != old_season_pm ||
+	    season_goals->value() != old_season_goals ||
+	    season_assists->value() != old_season_assists)
+		scoreboard_player_set_season(number, season_pm->value(),
+					     season_goals->value(),
+					     season_assists->value());
+}
+
+const struct scoreboard_goalie *find_goalie(int number)
+{
+	for (int i = 0; i < scoreboard_goalie_count(); i++) {
+		if (scoreboard_goalie_get(i)->number == number)
+			return scoreboard_goalie_get(i);
+	}
+	return nullptr;
+}
+
+/* Type in exact shots against, goals against and games for one goalie. */
+void edit_goalie_stats(QWidget *parent, int number)
+{
+	const struct scoreboard_goalie *g = find_goalie(number);
+	if (g == nullptr)
+		return;
+	const int old_season_sa = g->season_shots_against;
+	const int old_season_ga = g->season_goals_against;
+	const int old_games = g->games;
+
+	QDialog dialog(parent);
+	dialog.setWindowTitle(QString("Edit goalie #%1").arg(number));
+	QGridLayout *grid = new QGridLayout(&dialog);
+	grid->addWidget(new QLabel("", &dialog), 0, 0);
+	grid->addWidget(new QLabel("<b>This game</b>", &dialog), 0, 1);
+	grid->addWidget(new QLabel("<b>Season</b>", &dialog), 0, 2);
+	QSpinBox *game_sa = make_stat_spin(&dialog, 0, 999, g->shots_against);
+	QSpinBox *game_ga = make_stat_spin(&dialog, 0, 99, g->goals_against);
+	QSpinBox *season_sa = make_stat_spin(&dialog, 0, 99999, old_season_sa);
+	QSpinBox *season_ga = make_stat_spin(&dialog, 0, 9999, old_season_ga);
+	QSpinBox *games = make_stat_spin(&dialog, 0, 999, old_games);
+	grid->addWidget(new QLabel("Shots against (SA):", &dialog), 1, 0);
+	grid->addWidget(game_sa, 1, 1);
+	grid->addWidget(season_sa, 1, 2);
+	grid->addWidget(new QLabel("Goals against (GA):", &dialog), 2, 0);
+	grid->addWidget(game_ga, 2, 1);
+	grid->addWidget(season_ga, 2, 2);
+	grid->addWidget(new QLabel("Games played:", &dialog), 3, 0);
+	grid->addWidget(games, 3, 2);
+	QLabel *note = new QLabel(
+		"Save % is worked out from SA and GA. Changing a game number also moves the season number by the same amount.",
 		&dialog);
 	note->setWordWrap(true);
 	note->setStyleSheet("font-size: 10px; color: gray;");
@@ -1118,22 +1252,255 @@ void edit_player_stats(QWidget *parent, int number)
 	if (dialog.exec() != QDialog::Accepted)
 		return;
 
-	scoreboard_player_set_plus_minus(number, game_pm->value());
-	scoreboard_player_set_goals(number, game_goals->value());
-	scoreboard_player_set_assists(number, game_assists->value());
-	/* Season numbers typed here win over the shift from the game edit. */
-	if (season_pm->value() != old_season_pm ||
-	    season_goals->value() != old_season_goals ||
-	    season_assists->value() != old_season_assists)
-		scoreboard_player_set_season(number, season_pm->value(),
-					     season_goals->value(),
-					     season_assists->value());
+	scoreboard_goalie_set_shots_against(number, game_sa->value());
+	scoreboard_goalie_set_goals_against(number, game_ga->value());
+	g = find_goalie(number);
+	if (g == nullptr)
+		return;
+	const int new_sa = season_sa->value() != old_season_sa
+				   ? season_sa->value()
+				   : g->season_shots_against;
+	const int new_ga = season_ga->value() != old_season_ga
+				   ? season_ga->value()
+				   : g->season_goals_against;
+	scoreboard_goalie_set_season(number, new_sa, new_ga, games->value());
+}
+
+void add_goalies_from_text(QString text)
+{
+	text.replace(QLatin1Char(','), QLatin1Char(' '));
+	text.remove(QLatin1Char('#'));
+	const QStringList parts =
+		text.simplified().split(' ', Qt::SkipEmptyParts);
+	for (const QString &part : parts) {
+		bool ok = false;
+		const int number = part.toInt(&ok);
+		if (ok)
+			scoreboard_goalie_add(number);
+	}
+}
+
+QString goalie_row_text(const struct scoreboard_goalie *g, bool season)
+{
+	const int sa = season ? g->season_shots_against : g->shots_against;
+	const int ga = season ? g->season_goals_against : g->goals_against;
+	char sv[16];
+	scoreboard_format_save_percentage(sa, ga, sv, sizeof(sv));
+	const bool in_net = scoreboard_get_goalie_in_net() == g->number;
+	return QString::asprintf("%s#%-3d SA %3d  GA %2d  SV%% %s",
+				 in_net ? "NET " : "    ", g->number, sa, ga,
+				 sv);
+}
+
+void show_goalie_menu(QWidget *button, int number, const QPoint &pos)
+{
+	QMenu menu(button);
+	QAction *net_action =
+		menu.addAction(QString("Put #%1 in net").arg(number));
+	QAction *edit_action = menu.addAction(
+		QString("Edit #%1 (SA, GA, games)...").arg(number));
+	menu.addSeparator();
+	QAction *remove_action = menu.addAction(
+		QString("Remove goalie #%1").arg(number));
+
+	QAction *chosen = menu.exec(button->mapToGlobal(pos));
+	if (chosen == nullptr)
+		return;
+	if (chosen == net_action)
+		scoreboard_set_goalie_in_net(number);
+	else if (chosen == edit_action)
+		edit_goalie_stats(button, number);
+	else if (chosen == remove_action)
+		scoreboard_goalie_remove(number);
+	write_files_now();
+	update_all_labels();
+}
+
+/* One row per goalie under the skaters. Click to edit; right-click to put the
+   goalie in net. The goalie in net is marked NET. */
+void update_goalie_rows()
+{
+	if (g_goalie_rows == nullptr || g_goalie_container == nullptr)
+		return;
+	const int count = scoreboard_goalie_count();
+	bool need_rebuild = (g_goalie_numbers.size() != count);
+	if (!need_rebuild) {
+		for (int i = 0; i < count; i++) {
+			if (g_goalie_numbers[i] !=
+			    scoreboard_goalie_get(i)->number)
+				need_rebuild = true;
+		}
+	}
+	if (need_rebuild) {
+		for (QPushButton *b : g_goalie_buttons) {
+			g_goalie_rows->removeWidget(b);
+			b->hide();
+			b->deleteLater();
+		}
+		g_goalie_buttons.clear();
+		g_goalie_numbers.clear();
+		for (int i = 0; i < count; i++) {
+			const int number = scoreboard_goalie_get(i)->number;
+			QPushButton *btn = new QPushButton(g_goalie_container);
+			btn->setStyleSheet(kOnIceButtonStyle);
+			btn->setContextMenuPolicy(Qt::CustomContextMenu);
+			btn->setToolTip("Click to edit. Right-click to put this goalie in net.");
+			QObject::connect(btn, &QPushButton::clicked,
+					 [btn, number]() {
+				edit_goalie_stats(btn, number);
+				write_files_now();
+				update_all_labels();
+			});
+			QObject::connect(
+				btn, &QWidget::customContextMenuRequested,
+				[btn, number](const QPoint &pos) {
+					show_goalie_menu(btn, number, pos);
+				});
+			g_goalie_rows->addWidget(btn);
+			btn->show();
+			g_goalie_buttons.push_back(btn);
+			g_goalie_numbers.push_back(number);
+		}
+	}
+	const bool season = show_season_stats();
+	for (int i = 0; i < count && i < g_goalie_buttons.size(); i++)
+		g_goalie_buttons[i]->setText(
+			goalie_row_text(scoreboard_goalie_get(i), season));
+	g_goalie_container->setVisible(count > 0);
+}
+
+/* The "goalie in net" picker in the main dock. */
+void refresh_goalie_combo()
+{
+	if (g_goalie_combo == nullptr)
+		return;
+	QSignalBlocker block(g_goalie_combo);
+	const int count = scoreboard_goalie_count();
+	bool same = (g_goalie_combo->count() == count + 1);
+	for (int i = 0; same && i < count; i++) {
+		if (g_goalie_combo->itemData(i + 1).toInt() !=
+		    scoreboard_goalie_get(i)->number)
+			same = false;
+	}
+	if (!same) {
+		g_goalie_combo->clear();
+		g_goalie_combo->addItem("(nobody)", -1);
+		for (int i = 0; i < count; i++) {
+			const int number = scoreboard_goalie_get(i)->number;
+			g_goalie_combo->addItem(QString("#%1").arg(number),
+						number);
+		}
+	}
+	const int idx =
+		g_goalie_combo->findData(scoreboard_get_goalie_in_net());
+	g_goalie_combo->setCurrentIndex(idx >= 0 ? idx : 0);
+}
+
+/* Ask who played, then end the game. Returns true if the game was ended. */
+bool run_end_game_dialog(QWidget *parent)
+{
+	if (scoreboard_game_is_ended()) {
+		QMessageBox::information(
+			parent, "End Game",
+			"This game is already ended. Use Reopen Last Game if something needs fixing.");
+		return false;
+	}
+	QDialog dialog(parent);
+	dialog.setWindowTitle("End Game");
+	QVBoxLayout *layout = new QVBoxLayout(&dialog);
+	QLabel *intro = new QLabel(
+		QString("Final score: %1 %2 - %3 %4\n\nWho played? Each player ticked gets one game played, which is used for points per game. Goalies who were in net get a game automatically.")
+			.arg(QString::fromUtf8(scoreboard_get_home_name()))
+			.arg(scoreboard_get_home_score())
+			.arg(scoreboard_get_away_score())
+			.arg(QString::fromUtf8(scoreboard_get_away_name())),
+		&dialog);
+	intro->setWordWrap(true);
+	layout->addWidget(intro);
+	QGridLayout *grid = new QGridLayout();
+	QVector<QCheckBox *> boxes;
+	const int count = scoreboard_roster_count();
+	for (int i = 0; i < count; i++) {
+		const int number = scoreboard_roster_get(i)->number;
+		QCheckBox *box = new QCheckBox(QString("#%1").arg(number), &dialog);
+		box->setChecked(true);
+		box->setProperty("number", number);
+		grid->addWidget(box, i / 4, i % 4);
+		boxes.push_back(box);
+	}
+	layout->addLayout(grid);
+	QHBoxLayout *quick = new QHBoxLayout();
+	QPushButton *all_btn = new QPushButton("Tick all", &dialog);
+	QPushButton *none_btn = new QPushButton("Untick all", &dialog);
+	quick->addWidget(all_btn);
+	quick->addWidget(none_btn);
+	quick->addStretch(1);
+	layout->addLayout(quick);
+	QObject::connect(all_btn, &QPushButton::clicked, [boxes]() {
+		for (QCheckBox *b : boxes)
+			b->setChecked(true);
+	});
+	QObject::connect(none_btn, &QPushButton::clicked, [boxes]() {
+		for (QCheckBox *b : boxes)
+			b->setChecked(false);
+	});
+	QDialogButtonBox *buttons = new QDialogButtonBox(
+		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+	buttons->button(QDialogButtonBox::Ok)->setText("End Game");
+	layout->addWidget(buttons);
+	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
+			 &QDialog::accept);
+	QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
+			 &QDialog::reject);
+	if (dialog.exec() != QDialog::Accepted)
+		return false;
+
+	std::vector<int> played;
+	for (QCheckBox *b : boxes) {
+		if (b->isChecked())
+			played.push_back(b->property("number").toInt());
+	}
+	const bool ended =
+		scoreboard_end_game(played.data(), (int)played.size());
+	write_files_now();
+	update_all_labels();
+	if (ended) {
+		const QString dir =
+			QString::fromUtf8(scoreboard_get_output_directory());
+		QMessageBox::information(
+			parent, "Game ended",
+			dir.isEmpty()
+				? "Game ended. Choose an output directory to get the game summary file."
+				: QString("Game ended. The summary is saved as game_summary.txt in:\n%1\n(A dated copy is saved next to it.)")
+					  .arg(dir));
+	}
+	return ended;
+}
+
+void run_reopen_last_game(QWidget *parent)
+{
+	if (!scoreboard_can_reopen_last_game()) {
+		QMessageBox::information(parent, "Reopen Last Game",
+					 "There is no ended game to reopen yet.");
+		return;
+	}
+	if (QMessageBox::question(
+		    parent, "Reopen Last Game",
+		    "Bring the last game back so you can fix mistakes?\n\n"
+		    "If New Game was pressed since, that game's score, shots, faceoffs and player and goalie numbers come back, and anything done since then is dropped. Games played are taken off until you press End Game again.\n\n"
+		    "This is remembered only until OBS is closed.") !=
+	    QMessageBox::Yes)
+		return;
+	scoreboard_reopen_last_game();
+	write_files_now();
+	update_all_labels();
 }
 
 void show_roster_menu(QWidget *parent, QWidget *anchor)
 {
 	QMenu menu(parent);
 	QAction *add_action = menu.addAction("Add players...");
+	QAction *add_goalie_action = menu.addAction("Add goalies...");
 	QAction *credit_home_action = menu.addAction(
 		"Last home goal: who scored and who was on the ice...");
 	QAction *credit_away_action = menu.addAction(
@@ -1148,6 +1515,10 @@ void show_roster_menu(QWidget *parent, QWidget *anchor)
 	QAction *skip_pp_action = menu.addAction("No +/- for goals during penalties");
 	skip_pp_action->setCheckable(true);
 	skip_pp_action->setChecked(scoreboard_get_plus_minus_skip_power_play());
+	QAction *release_pen_action = menu.addAction(
+		"Away goal ends a home minor penalty");
+	release_pen_action->setCheckable(true);
+	release_pen_action->setChecked(scoreboard_get_away_goal_ends_penalty());
 	QAction *ask_scorer_action =
 		menu.addAction("Ask about each goal (scorer, on ice)");
 	ask_scorer_action->setCheckable(true);
@@ -1166,6 +1537,14 @@ void show_roster_menu(QWidget *parent, QWidget *anchor)
 			QLineEdit::Normal, QString(), &ok);
 		if (ok)
 			add_players_from_text(text);
+	} else if (chosen == add_goalie_action) {
+		bool ok = false;
+		const QString text = QInputDialog::getText(
+			parent, "Add Goalies",
+			"Goalie jersey numbers (separated by spaces or commas, up to 4):",
+			QLineEdit::Normal, QString(), &ok);
+		if (ok)
+			add_goalies_from_text(text);
 	} else if (chosen == credit_home_action) {
 		prompt_goal_credit(parent, true, true);
 	} else if (chosen == credit_away_action) {
@@ -1173,21 +1552,24 @@ void show_roster_menu(QWidget *parent, QWidget *anchor)
 	} else if (chosen == reset_game_action) {
 		if (QMessageBox::question(
 			    parent, "Reset this game",
-			    "Set every player's +/-, goals and assists for this game back to zero? Season totals stay.") ==
+			    "Set every player's +/-, goals, assists and penalty minutes, and every goalie's shots and goals against, for this game back to zero? Season totals stay.") ==
 		    QMessageBox::Yes)
 			scoreboard_roster_reset_game_stats();
 	} else if (chosen == reset_season_action) {
 		if (QMessageBox::question(
 			    parent, "Reset season totals",
-			    "Set every player's season +/-, goals and assists back to zero? Use this at the start of a new season.") ==
+			    "Set every player's and goalie's season numbers (including games played) back to zero? Use this at the start of a new season.") ==
 		    QMessageBox::Yes)
 			scoreboard_roster_reset_season_stats();
 	} else if (chosen == remove_all_action) {
 		if (QMessageBox::question(
 			    parent, "Remove All Players",
-			    "Remove every player from the roster?") ==
+			    "Remove every player from the roster? Goalies stay.") ==
 		    QMessageBox::Yes)
 			scoreboard_roster_clear();
+	} else if (chosen == release_pen_action) {
+		scoreboard_set_away_goal_ends_penalty(
+			release_pen_action->isChecked());
 	} else if (chosen == skip_pp_action) {
 		scoreboard_set_plus_minus_skip_power_play(
 			skip_pp_action->isChecked());
@@ -1231,10 +1613,16 @@ QString player_row_text(const struct scoreboard_player *p, bool season)
 	const int pm_value = season ? p->season_plus_minus : p->plus_minus;
 	const int goals = season ? p->season_goals : p->goals;
 	const int assists = season ? p->season_assists : p->assists;
+	const int pim = season ? p->season_pim : p->pim;
 	char pm[16];
 	scoreboard_format_plus_minus(pm_value, pm, sizeof(pm));
-	return QString::asprintf("#%-3d %4s   %2dG %2dA %2dP", p->number, pm,
-				 goals, assists, goals + assists);
+	if (!season)
+		return QString::asprintf("#%-3d %4s  %2dG %2dA %2dP %3dPIM",
+					 p->number, pm, goals, assists,
+					 goals + assists, pim);
+	return QString::asprintf("#%-3d %4s  %2dG %2dA %2dP %5.2fPPG %3dPIM",
+				 p->number, pm, goals, assists, goals + assists,
+				 scoreboard_player_get_ppg(p->number), pim);
 }
 
 void update_onice_team(onice_widgets &w)
@@ -1334,6 +1722,13 @@ void open_stats_dialog(QWidget *parent)
 		w.grid->setSpacing(2);
 		col->addWidget(w.container);
 
+		g_goalie_container = new QWidget(g_stats_dialog);
+		g_goalie_rows = new QVBoxLayout(g_goalie_container);
+		g_goalie_rows->setContentsMargins(0, 0, 0, 0);
+		g_goalie_rows->setSpacing(2);
+		col->addWidget(new QLabel("Goalies", g_stats_dialog));
+		col->addWidget(g_goalie_container);
+
 		QHBoxLayout *btns = new QHBoxLayout();
 		QPushButton *roster_btn =
 			new QPushButton("Roster...", g_stats_dialog);
@@ -1355,6 +1750,7 @@ void open_stats_dialog(QWidget *parent)
 				 g_stats_dialog, &QDialog::hide);
 	}
 	update_onice_team(g_home_onice);
+	update_goalie_rows();
 	g_stats_dialog->show();
 	g_stats_dialog->raise();
 	g_stats_dialog->activateWindow();
@@ -1464,7 +1860,9 @@ void update_all_labels()
 		if (show_onice && g_stats_dialog != nullptr &&
 		    g_stats_dialog->isVisible()) {
 			update_onice_team(g_home_onice);
+			update_goalie_rows();
 		}
+		refresh_goalie_combo();
 	}
 	if (g_home_name_edit && !g_home_name_edit->hasFocus())
 		g_home_name_edit->setText(
@@ -1734,9 +2132,12 @@ void write_files_now()
 QString current_roster_key(char *buf, size_t size)
 {
 	scoreboard_roster_to_string(buf, size);
-	return QString::fromUtf8(buf) +
+	char goalie_buf[512];
+	scoreboard_goalies_to_string(goalie_buf, sizeof(goalie_buf));
+	return QString::fromUtf8(buf) + "|" + QString::fromUtf8(goalie_buf) +
 	       (scoreboard_get_plus_minus_skip_power_play() ? "|1" : "|0") +
-	       (g_ask_scorer ? "|1" : "|0");
+	       (g_ask_scorer ? "|1" : "|0") +
+	       (scoreboard_get_away_goal_ends_penalty() ? "|1" : "|0");
 }
 
 void persist_rosters_if_changed()
@@ -1751,6 +2152,12 @@ void persist_rosters_if_changed()
 		return;
 	config_set_string(profile_cfg, kConfigSection, kHomeRosterKey,
 			  home_buf);
+	char goalie_buf[512];
+	scoreboard_goalies_to_string(goalie_buf, sizeof(goalie_buf));
+	config_set_string(profile_cfg, kConfigSection, kHomeGoaliesKey,
+			  goalie_buf);
+	config_set_bool(profile_cfg, kConfigSection, kKeepPenaltyOnAwayGoalKey,
+			!scoreboard_get_away_goal_ends_penalty());
 	config_set_bool(profile_cfg, kConfigSection,
 			kPlusMinusCountPowerPlayKey,
 			!scoreboard_get_plus_minus_skip_power_play());
@@ -1820,6 +2227,10 @@ void load_profile_paths()
 			scoreboard_set_penalty_label_format(pen_fmt);
 		scoreboard_roster_from_string(config_get_string(
 			profile_cfg, kConfigSection, kHomeRosterKey));
+		scoreboard_goalies_from_string(config_get_string(
+			profile_cfg, kConfigSection, kHomeGoaliesKey));
+		scoreboard_set_away_goal_ends_penalty(!config_get_bool(
+			profile_cfg, kConfigSection, kKeepPenaltyOnAwayGoalKey));
 		scoreboard_set_plus_minus_skip_power_play(!config_get_bool(
 			profile_cfg, kConfigSection,
 			kPlusMinusCountPowerPlayKey));
@@ -3842,13 +4253,42 @@ bool scoreboard_dock_init(scoreboard_log_fn log_fn)
 
 	/* ---- SECTION: On ice / plus-minus (hockey only) ---- */
 	g_onice_section_widget = new QWidget(widget);
-	QHBoxLayout *onice_row = new QHBoxLayout(g_onice_section_widget);
-	onice_row->setContentsMargins(0, 0, 0, 0);
+	QVBoxLayout *onice_col = new QVBoxLayout(g_onice_section_widget);
+	onice_col->setContentsMargins(0, 0, 0, 0);
+	onice_col->setSpacing(4);
 	QPushButton *stats_btn =
 		new QPushButton("Player Stats / Roster...", widget);
-	onice_row->addWidget(stats_btn);
+	onice_col->addWidget(stats_btn);
 	QObject::connect(stats_btn, &QPushButton::clicked,
 			 [widget]() { open_stats_dialog(widget); });
+
+	QHBoxLayout *goalie_row = new QHBoxLayout();
+	goalie_row->setContentsMargins(0, 0, 0, 0);
+	goalie_row->addWidget(new QLabel("Goalie in net:", widget));
+	g_goalie_combo = new QComboBox(widget);
+	g_goalie_combo->setToolTip(
+		"Away shots and goals you add are counted against this goalie. Add goalies from Player Stats > Roster.");
+	goalie_row->addWidget(g_goalie_combo, 1);
+	onice_col->addLayout(goalie_row);
+	QObject::connect(g_goalie_combo, QOverload<int>::of(&QComboBox::activated),
+			 [](int index) {
+		scoreboard_set_goalie_in_net(
+			g_goalie_combo->itemData(index).toInt());
+		write_files_now();
+		update_all_labels();
+	});
+
+	QHBoxLayout *game_row = new QHBoxLayout();
+	game_row->setContentsMargins(0, 0, 0, 0);
+	QPushButton *end_game_btn = new QPushButton("End Game...", widget);
+	QPushButton *reopen_btn = new QPushButton("Reopen Last Game...", widget);
+	game_row->addWidget(end_game_btn, 1);
+	game_row->addWidget(reopen_btn, 1);
+	onice_col->addLayout(game_row);
+	QObject::connect(end_game_btn, &QPushButton::clicked,
+			 [widget]() { run_end_game_dialog(widget); });
+	QObject::connect(reopen_btn, &QPushButton::clicked,
+			 [widget]() { run_reopen_last_game(widget); });
 	root->addWidget(g_onice_section_widget);
 
 	g_onice_separator = new QFrame(widget);
@@ -4141,7 +4581,31 @@ bool scoreboard_dock_init(scoreboard_log_fn log_fn)
 			 [widget]() { open_configure_dialog(widget); });
 	QObject::connect(clock_settings_action, &QAction::triggered,
 			 [widget]() { open_clock_settings_dialog(widget); });
-	QObject::connect(new_game_action, &QAction::triggered, []() {
+	QObject::connect(new_game_action, &QAction::triggered, [widget]() {
+		const bool has_game = scoreboard_get_home_score() > 0 ||
+				      scoreboard_get_away_score() > 0 ||
+				      scoreboard_get_home_shots() > 0 ||
+				      scoreboard_get_away_shots() > 0;
+		if (is_hockey_now() && has_game &&
+		    !scoreboard_game_is_ended() &&
+		    scoreboard_roster_count() > 0) {
+			QMessageBox box(widget);
+			box.setWindowTitle("New Game");
+			box.setText(
+				"This game has not been ended, so players are not yet credited with a game played (used for points per game).");
+			QPushButton *end_first = box.addButton(
+				"End Game First", QMessageBox::AcceptRole);
+			QPushButton *anyway = box.addButton(
+				"New Game Anyway", QMessageBox::DestructiveRole);
+			box.addButton(QMessageBox::Cancel);
+			box.exec();
+			if (box.clickedButton() == end_first) {
+				if (!run_end_game_dialog(widget))
+					return;
+			} else if (box.clickedButton() != anyway) {
+				return;
+			}
+		}
 		scoreboard_new_game();
 		g_period_start_logged = -1;
 		scoreboard_event_log_clear();

@@ -12,6 +12,14 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 - Click a player to type in exact game and season numbers.
 - New text files for overlays: `home_plus_minus.txt`, `home_season_plus_minus.txt`, `home_scoring.txt`, `home_season_scoring.txt` (lists the whole roster) and `last_goal.txt`. Columns line up in a fixed-width font.
 - The roster and all numbers are kept across OBS restarts.
+- **Goalies:** up to 4, kept apart from skaters, with shots against (SA), goals against (GA) and save %. A **Goalie in net** list in the dock picks who is playing; away shots and goals are counted against that goalie, and you can change goalies at any time. New files `home_goalie.txt`, `home_goalies.txt` and `home_goalies_season.txt`.
+- **Faceoff percentage:** `home_faceoff_percent.txt` (wins out of all faceoffs).
+- **Penalty minutes** per player, game and season, in `home_pim.txt`.
+- **Points per game** in `home_ppg.txt`, counted over games finished with End Game.
+- **End Game** button: pick who played, then a summary of all the important numbers is written to `game_summary.txt` (plus a dated copy).
+- **Reopen Last Game** button to fix mistakes after End Game or after New Game.
+- The goal window now allows at most 5 players on the ice.
+- An away goal while the home team is short-handed ends the first home minor penalty (2 minutes removed, 4 minutes drops to 2, 2+2 moves on). Majors are not ended. Can be turned off.
 
 ## [0.8.0] - 2026-04-17
 

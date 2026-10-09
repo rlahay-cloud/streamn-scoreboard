@@ -13,7 +13,7 @@ OBS Studio plugin that tracks live game scoreboard state and writes it to indivi
 ## Features
 
 - **7 sport presets** — hockey, basketball, soccer, football, lacrosse, rugby, and generic
-- **32 text files** updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals and assists (game and season), sport, and more
+- **38 text files** updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals, assists, penalty minutes and points per game (game and season), goalie shots against, goals against and save percentage, faceoff percentage, sport, and more
 - **Dock UI** with full scoreboard controls in an OBS dock panel
 - **45 OBS hotkeys** for hands-free operation during broadcasts
 - **Penalty tracking** with automatic countdown timers, compound penalties (2+2, 2+5, 2+10), edit/clear per slot (hockey, lacrosse, rugby)
@@ -143,6 +143,12 @@ Set an output directory in the dock settings. The plugin writes these files on e
 | `home_scoring.txt` | Players with a goal or assist this game | `#12   1G  2A  3P` |
 | `home_season_scoring.txt` | Whole roster with season goals, assists and points | `#12   9G 12A 21P` |
 | `last_goal.txt` | Who scored the latest credited goal and who assisted | `Eagles goal: #12 (assists: #7, #9)` |
+| `home_pim.txt` | Penalty minutes per player, this game and season | `#12    4 game   18 season` |
+| `home_ppg.txt` | Points per game per player (finished games only) | `#12   1.50` |
+| `home_goalie.txt` | The goalie in net: shots against, goals against, save % | `#31  SA  25  GA  2  SV% .920` |
+| `home_goalies.txt` | Every goalie, this game | `#31  SA  25  GA  2  SV% .920` |
+| `home_goalies_season.txt` | Every goalie, whole season | `#31  SA 310  GA 28  SV% .910` |
+| `home_faceoff_percent.txt` | Home faceoff wins out of all faceoffs | `12/20 (60%)` |
 | `home_faceoffs.txt` | Home faceoff wins | `8` |
 | `away_faceoffs.txt` | Away faceoff wins | `6` |
 | `cumulative_clock.txt` | Cumulative game clock (when enabled) | `32:15` |
@@ -172,6 +178,19 @@ Each row in the Home Players window reads like `#12    +2   1G  2A  3P` (jersey 
 - Taking a goal back with the score "-" button removes its credit and +/- changes. Typing a score in directly, or editing the score files, cannot be matched to earlier goals, so those are not reversed.
 - The roster and all numbers are remembered when you restart OBS.
 - For your overlay, point a Text source at `home_plus_minus.txt` or `home_season_plus_minus.txt` for the whole roster, `home_scoring.txt` for this game's goals and assists, `home_season_scoring.txt` for the whole roster's season points, or `last_goal.txt` for a "who just scored" line. Use a fixed-width font (like Consolas or Courier New) in the Text source so the columns line up.
+
+## Goalies, Penalty Minutes, Points Per Game and End Game
+
+These all sit with the player stats (hockey only).
+
+- **Goalies:** in the Home Players window click **Roster... > Add goalies...** and type up to 4 goalie numbers. Goalies are kept apart from skaters: they only have shots against (SA), goals against (GA) and save % (SV%), no goals, assists or points. In the dock, the **Goalie in net** list picks who is playing. Every away shot and away goal you add with the buttons or hotkeys is counted against that goalie. Change the list any time (for example after a goalie swap) and new shots go to the new goalie. A goal does not add a shot by itself, so tap the away shot button for it too. Save % is worked out as (SA - GA) / SA. Typing a total directly into the shots or score box does not change goalie numbers. Click a goalie row to type in exact numbers, or right-click to put that goalie in net.
+- **Faceoff percentage:** `home_faceoff_percent.txt` shows your wins out of all faceoffs, like `12/20 (60%)`. It follows the faceoff buttons you already use.
+- **5 on the ice:** the goal window lets you tick at most 5 players.
+- **Penalty minutes (PIM):** when you add a home penalty with a player number that is on the roster, the penalty minutes (2, 4, 5 and so on) are added to that player for the game and the season. `home_pim.txt` lists them. Removing a penalty from the clock by hand does not take the minutes off; fix them by clicking the player and editing.
+- **Away goal ends a home minor:** when the away team scores while your team is short-handed, the first running minor ends. A 2 minute penalty is removed, a 4 minute penalty drops to 2, and a 2+2 moves to its second part. Majors (5 minutes or more) never end this way, and nothing happens when both teams have the same number of penalties (4 on 4). Taking the goal back does not bring the penalty back. Turn this off with **Roster... > Away goal ends a home minor penalty**.
+- **Points per game (PPG):** `home_ppg.txt` lists each player's points divided by games played. A game counts only after you press **End Game**, so the number does not jump around during a game.
+- **End Game:** press **End Game...** in the dock, tick who played (everyone starts ticked), and press **End Game**. Everyone ticked gets one game played, goalies who were in net get one too, and a summary of the score, shots, faceoffs, every player's game and season numbers and every goalie's numbers is written to `game_summary.txt` in your output folder. A dated copy (like `game_summary_2026-10-09_193000.txt`) is saved next to it so the next game does not overwrite it. If you press New Game before ending, the dock asks if you want to end the game first.
+- **Fixing the last game:** **Reopen Last Game...** undoes End Game (the games played are taken off) so you can fix goals, assists, shots or anything else, then press End Game again. If you already pressed New Game, it also brings back that game's score, shots, faceoffs and player and goalie numbers, and drops anything done since. This is remembered only until OBS is closed.
 
 ## Hotkeys
 

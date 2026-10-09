@@ -49,8 +49,13 @@ Two-layer design separating testable core logic from OBS-dependent code:
 - Penalty edit: `scoreboard_*_penalty_set_time()` changes remaining time; setting to 0 on a compound penalty transitions to phase 2 instead of clearing
 - Penalty label format: configurable template (`{{ number }}`, `{{ time }}`, `{{ phase2 }}`, `{{ if_phase2 }}...{{ end_if }}`) for combined `home_penalty_labels.txt` / `away_penalty_labels.txt` output files
 - Cumulative game clock: opt-in feature tracking total elapsed time across all periods; `game_clock_accumulated_tenths` stores completed period time, `scoreboard_game_clock_get_tenths()` computes live total; configurable display format (MM:SS or H:MM:SS)
-- Text file output: writes 32 files (clock, period, scores, shots, faceoffs, fouls, penalties, penalty labels, period labels, sport, penalty durations, period length, cumulative clock, home plus/minus game and season, scoring game and season, last goal) to configurable directory
+- Text file output: writes 38 files (clock, period, scores, shots, faceoffs, fouls, penalties, penalty labels, period labels, sport, penalty durations, period length, cumulative clock, home plus/minus game and season, scoring game and season, last goal, penalty minutes, points per game, faceoff percentage, goalie in net, goalies game and season) to configurable directory; `game_summary.txt` plus a dated copy are written only by `scoreboard_end_game()`
 - Home player roster and stats: only the home team is tracked (up to `SCOREBOARD_MAX_ROSTER` players by jersey number) with plus/minus, goals and assists (no persistent on-ice state: who was on the ice is named per goal); every stat has a game value and a season value (`season_*`), and changing a game value moves the season value by the same amount; `scoreboard_new_game()` clears game values only (`scoreboard_roster_reset_game_stats()`), `scoreboard_roster_reset_season_stats()` clears the season. `scoreboard_increment_*_score()` records the goal (nobody gets +/- yet; goals during any active penalty are marked skipped when `scoreboard_get_plus_minus_skip_power_play()` is set); `scoreboard_set_goal_on_ice()` names who was on the ice for the latest goal by a team (home goal +1, away goal -1) and can be called again to replace the answer; `scoreboard_decrement_*_score()` reverses the most recent matching goal from a bounded history. `scoreboard_credit_goal()` credits the latest home goal (stored in the same `pm_event` history so taking the goal back reverses it) and `scoreboard_player_set_plus_minus/goals/assists/season()` allow manual edits. `scoreboard_roster_to_string()` (`number:0:pm:goals:assists:season_pm:season_goals:season_assists`, the second slot is an unused legacy on-ice flag; older shorter forms still load) / `scoreboard_roster_from_string()` give the dock a compact form to keep the roster in the OBS profile config
+- Goalies (`SCOREBOARD_MAX_GOALIES` 4) are separate from the roster: `struct scoreboard_goalie` (shots against, goals against, season values, games). `scoreboard_set_goalie_in_net()` picks who is in net; `scoreboard_increment/decrement_away_shots()` and away goals charge that goalie (the goalie is stored in the `pm_event` so taking a goal back credits the right one). `set_*` totals never touch goalie numbers. `scoreboard_goalies_to_string/from_string` for the dock config
+- Skaters also have `pim`/`season_pim` (added by `scoreboard_home_penalty_add*`, suppressed while `parse_penalty_files` re-reads files via `g_loading_penalties`) and `games`. PPG = finished-game points / games (the game in progress is excluded until End Game)
+- `struct scoreboard_penalty.major` (5+ minutes) is kept up to date by `penalty_phase_two()`; `release_home_minor_for_goal()` applies the away-goal rule (2 removed, 4 to 2, 2+2 to phase 2, never majors, only when the home team has more running penalties)
+- `scoreboard_end_game(played, count)` adds a game for players and goalies, writes the summary; `scoreboard_reopen_last_game()` undoes it and, via an in-memory snapshot taken by `scoreboard_new_game()` (`g_prev_game`), restores the previous game
+- Goal on-ice answers are capped at `SCOREBOARD_MAX_ON_ICE` (5)
 - JSON state persistence (save/load), action log ring buffer (64 entries)
 - All exported functions use `scoreboard_*` prefix
 - `scoreboard_reset_state_for_tests()` resets global state between test runs
@@ -78,7 +83,7 @@ Two-layer design separating testable core logic from OBS-dependent code:
 
 ## Testing
 
-Tests are plain C using `assert()` — no external test framework. Seven test binaries exercising scoreboard-core:
+Tests are plain C using `assert()` — no external test framework. Eight test binaries exercising scoreboard-core:
 
 - `test-scoreboard-core.c` — clock, period, lifecycle, cumulative game clock
 - `test-scoreboard-core-scoring.c` — score, shots, team names, new game
@@ -86,6 +91,7 @@ Tests are plain C using `assert()` — no external test framework. Seven test bi
 - `test-scoreboard-core-persistence.c` — file output, JSON save/load, action logs, CLI settings, game clock persistence, penalty label file output
 - `test-scoreboard-core-sport.c` — sport presets, fouls, score labels
 - `test-scoreboard-core-events.c` — event log add/remove/find/write lifecycle
+- `test-scoreboard-core-goalies.c` — goalies, faceoff percent, 5 on ice, PIM, penalty release, PPG, end game, reopen, persistence
 - `test-scoreboard-core-plusminus.c` — roster, goal on-ice answers, goal crediting and reversal, penalty skipping, file output, persistence, roster text form
 
 Each test calls `scoreboard_reset_state_for_tests()` for isolation. Tests run via `ctest --preset default` or `make test`.

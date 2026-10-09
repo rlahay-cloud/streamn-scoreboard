@@ -557,6 +557,8 @@ static void test_points_per_game(void)
 
 	scoreboard_format_ppg_lines(tiny, 0);
 	assert(tiny[0] == 'x');
+	assert(scoreboard_player_get_ppg(10) == 2.0);
+	assert(scoreboard_player_get_ppg(99) == 0.0);
 	char small[12];
 	scoreboard_format_ppg_lines(small, sizeof(small));
 	assert(strcmp(small, "#10   2.00") == 0);

@@ -389,6 +389,8 @@ void scoreboard_format_pim_lines(char *buf, size_t size);
 /* Points per game over finished games, e.g. "#12  1.50". Everyone on the
  * roster is listed. A game in progress is not counted until End Game. */
 void scoreboard_format_ppg_lines(char *buf, size_t size);
+/* One player's points per game, 0 if not on the roster or no games yet. */
+double scoreboard_player_get_ppg(int number);
 
 /* When true (default), a goal by the away team ends the first running home
  * minor penalty: a 2 minute penalty is removed, a 4 minute one drops to 2,

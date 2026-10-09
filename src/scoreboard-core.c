@@ -1532,6 +1532,12 @@ static double player_ppg(const struct scoreboard_player *p)
 	return (double)clamp_zero(points) / p->games;
 }
 
+double scoreboard_player_get_ppg(int number)
+{
+	const struct scoreboard_player *p = roster_lookup(number);
+	return p != NULL ? player_ppg(p) : 0.0;
+}
+
 void scoreboard_format_ppg_lines(char *buf, size_t size)
 {
 	if (size == 0)
