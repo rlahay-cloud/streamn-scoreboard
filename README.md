@@ -13,7 +13,7 @@ OBS Studio plugin that tracks live game scoreboard state and writes it to indivi
 ## Features
 
 - **7 sport presets** — hockey, basketball, soccer, football, lacrosse, rugby, and generic
-- **31 text files** updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, plus/minus, on-ice players, sport, and more
+- **38 text files** (plus `game_summary.txt` and `season_backup.txt` at End Game) updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals, assists, penalty minutes and points per game (game and season), goalie shots against, goals against and save percentage, faceoff percentage, sport, and more
 - **Dock UI** with full scoreboard controls in an OBS dock panel
 - **45 OBS hotkeys** for hands-free operation during broadcasts
 - **Penalty tracking** with automatic countdown timers, compound penalties (2+2, 2+5, 2+10), edit/clear per slot (hockey, lacrosse, rugby)
@@ -22,7 +22,7 @@ OBS Studio plugin that tracks live game scoreboard state and writes it to indivi
 - **Game event timestamps** — YouTube chapter markers copied to clipboard for livestream descriptions
 - **Recording chapter markers** — game events written to a `.chapters.txt` companion file next to each recording; also embedded directly into Hybrid MP4/MOV recordings on OBS 32+
 - **Cumulative game clock** — opt-in clock counting up from 0:00 across all periods, written to `cumulative_clock.txt`, with configurable display format (MM:SS or H:MM:SS)
-- **Player plus/minus (+/-)** for hockey: add a roster per team, tap players on and off the ice, and every goal updates +/- automatically (see [Plus/Minus Tracking](#plusminus-tracking))
+- **Player plus/minus (+/-)** for hockey: add your team's roster, tap players on and off the ice, and every goal updates +/- automatically. Credit goals and assists to players and see this game's or the whole season's numbers (see [Plus/Minus Tracking](#plusminus-tracking))
 - **Custom penalty labels** — combined penalty number + time in a single file per team (`home_penalty_labels.txt`, `away_penalty_labels.txt`) with configurable format template and compound penalty support
 
 Build your own scorebug overlay using OBS Text sources pointed at the output files:
@@ -138,10 +138,17 @@ Set an output directory in the dock settings. The plugin writes these files on e
 | `sport.txt` | Active sport preset | `hockey` |
 | `home_penalty_labels.txt` | Combined penalty number + time (one per line) | `#12  1:32` |
 | `away_penalty_labels.txt` | Combined penalty number + time (one per line) | `#19  0:22` |
-| `home_plus_minus.txt` | Home roster with +/- (one per line) | `#12  +2` |
-| `away_plus_minus.txt` | Away roster with +/- (one per line) | `#19  -1` |
-| `home_on_ice.txt` | Home players on the ice with +/- (one per line) | `#12  +2` |
-| `away_on_ice.txt` | Away players on the ice with +/- (one per line) | `#19  -1` |
+| `home_plus_minus.txt` | Home roster, +/- this game (one per line) | `#12    +2` |
+| `home_season_plus_minus.txt` | Home roster, +/- for the season | `#12   +14` |
+| `home_scoring.txt` | Players with a goal or assist this game | `#12   1G  2A  3P` |
+| `home_season_scoring.txt` | Whole roster with season goals, assists and points | `#12   9G 12A 21P` |
+| `last_goal.txt` | Who scored the latest credited goal and who assisted | `Eagles goal: #12 (assists: #7, #9)` |
+| `home_pim.txt` | Penalty minutes per player, this game and season | `#12    4 game   18 season` |
+| `home_ppg.txt` | Points per game per player (finished games only) | `#12   1.50` |
+| `home_goalie.txt` | The goalie in net: shots against, goals against, save % | `#31  SA  25  GA  2  SV% .920  TOI 34:12` |
+| `home_goalies.txt` | Every goalie, this game | `#31  SA  25  GA  2  SV% .920` |
+| `home_goalies_season.txt` | Every goalie, whole season | `#31  SA 310  GA 28  SV% .910` |
+| `home_faceoff_percent.txt` | Home faceoff wins out of all faceoffs | `12/20 (60%)` |
 | `home_faceoffs.txt` | Home faceoff wins | `8` |
 | `away_faceoffs.txt` | Away faceoff wins | `6` |
 | `cumulative_clock.txt` | Cumulative game clock (when enabled) | `32:15` |
@@ -152,21 +159,42 @@ Set an output directory in the dock settings. The plugin writes these files on e
 
 Not all files are relevant for every sport — shots are only tracked for hockey and lacrosse, penalties for hockey/lacrosse/rugby, and fouls for basketball/soccer/football. Files for inactive features still exist but won't change.
 
-## Plus/Minus Tracking
+## Plus/Minus, Goals and Assists
 
-For hockey, the dock has an on-ice section under the penalties, one column per team.
+For hockey, the dock has one button, **Player Stats / Roster...**. It opens a separate **Home Players** window with the whole roster, two players per row. The window stays open while you work and updates by itself. Only your home team's players are tracked. The away team is not.
 
-1. Click **Roster...** under a team and choose **Add players...**. Type the jersey numbers separated by spaces or commas (for example `4 7 12, 19`). You can add up to 30 players per team.
-2. Click a player's button to put them on the ice (the button turns bold and the title shows how many are on). Click again to take them off. **Clear Ice** takes everyone off.
-3. Score as usual. Each goal gives +1 to the scoring team's on-ice players and -1 to the other team's on-ice players.
+1. In the Home Players window, click **Roster...** and choose **Add players...**. Type the jersey numbers separated by spaces or commas (for example `4 7 12, 19`). You can add up to 30 players.
+2. Score as usual. After each goal, home or away, a small window asks **who was on the ice**. Tick the players. Every box starts empty for each new goal, nothing is remembered from the last one. Press **OK** to save, or **Skip** to leave everything alone (nobody gets any +/- for that goal).
+3. For a home goal the same window also asks who scored and who got up to two assists. Anyone you pick as the scorer or an assist is ticked as on the ice automatically.
 
-Good to know:
+Each row in the Home Players window reads like `#12    +2   1G  2A  3P` (jersey number, +/-, goals, assists, points). The **Game / Season** switch at the top changes whether the rows show this game or the whole season. Click a row to edit that player.
 
-- **Power-play goals are skipped** by default (the scoring team had more players on the ice because of a penalty). Shorthanded and even-strength goals count. Turn this off with **Roster... > Skip power-play goals**.
-- **Taking a goal back** with the score "-" button reverses the +/- changes it made, for the same players, even if the lines have changed since. Typing a score in directly, or editing the score files, cannot be matched to earlier goals, so those are not reversed. You can also fix one player by right-clicking their button (add 1, subtract 1, or remove them from the roster).
-- **New Game** clears every +/- and takes everyone off the ice, but keeps the rosters.
-- Rosters, who is on the ice, and the +/- totals are remembered when you restart OBS.
-- For your overlay, point a Text source at `home_plus_minus.txt` or `away_plus_minus.txt` to show the whole roster, or at `home_on_ice.txt` or `away_on_ice.txt` to show only the players on the ice right now.
+- **Plus/minus:** a home goal gives +1 to the players you ticked, and an away goal gives them -1.
+- **No +/- during penalties:** if any penalty is active on either team when a goal is scored (power play, shorthanded or 4 on 4), nobody gets a +/- for that goal. Goals, assists and the score still count. The goal window tells you when this happens. You can turn this rule off with **Roster... > No +/- for goals during penalties**.
+- **Game numbers** start at zero for each game (**New Game** clears them but keeps the roster).
+- **Season numbers** keep adding up from game to game. Anything that changes a game number (a goal, or an edit) changes the season number by the same amount. Use **Roster... > Reset season totals (new season)** when a new season starts.
+- **Manual changes:** click a player (or right-click for more) and choose **Edit** to type in exact game and season +/-, goals and assists. If you only change a game number, the season number follows. If you type a season number, it is used as typed.
+- **Fixing a goal later:** **Roster... > Last home goal...** and **Last away goal...** reopen the window for the most recent goal. The on-ice boxes show who was already named, so you can change them and the +/- moves to the right players. Leave scorer and assists on "(nobody)" to keep the credit already there. You can turn the window off with **Roster... > Ask about each goal**.
+- Taking a goal back with the score "-" button removes its credit and +/- changes. Typing a score in directly, or editing the score files, cannot be matched to earlier goals, so those are not reversed.
+- The roster and all numbers are remembered when you restart OBS.
+- For your overlay, point a Text source at `home_plus_minus.txt` or `home_season_plus_minus.txt` for the whole roster, `home_scoring.txt` for this game's goals and assists, `home_season_scoring.txt` for the whole roster's season points, or `last_goal.txt` for a "who just scored" line. Use a fixed-width font (like Consolas or Courier New) in the Text source so the columns line up.
+
+## Goalies, Penalty Minutes, Points Per Game and End Game
+
+These all sit with the player stats (hockey only).
+
+- **Goalies:** in the Home Players window click **Roster... > Add goalies...** and type up to 4 goalie numbers. Goalies are kept apart from skaters: they only have shots against (SA), goals against (GA) and save % (SV%), no goals, assists or points. In the dock, the **Goalie in net** list picks who is playing. Every away shot and away goal you add with the buttons or hotkeys is counted against that goalie. Change the list any time (for example after a goalie swap) and new shots go to the new goalie. Every goal counts as a shot automatically (for both teams), so do not tap the shot button for a goal. Taking a goal back with the score "-" button takes that shot back too. Save % is worked out as (SA - GA) / SA. Typing a total directly into the shots or score box does not change goalie numbers. Each goalie also has a time on ice (TOI) that counts up by itself while the game clock is running and that goalie is in net, so a goalie swap splits the time correctly. Click a goalie row to type in exact numbers (including TOI minutes), or right-click to put that goalie in net. The Season view of the Home Players window also shows games played (GP) for every skater and goalie.
+- **Faceoff percentage:** `home_faceoff_percent.txt` shows your wins out of all faceoffs, like `12/20 (60%)`. It follows the faceoff buttons you already use.
+- **Today's lineup:** **Roster... > Today's lineup...** lets you tick who is playing today (everyone starts ticked). Players left out are skipped in the goal window, the penalty window and End Game, and show "(out)" in the Home Players window. The lineup stays as you set it from game to game, so you only change it when someone is missing.
+- **Line buttons:** **Roster... > Forward lines and defence pairs...** lets you build lines (forwards: up to 3 players, defence pairs: up to 2). The goal window then shows buttons named F1, F2... and D1, D2.... Tap F2 and D1 and the five players are ticked at once; tapping another forward line swaps the forwards and leaves the defence alone. Players who are out are skipped. The boxes still start empty for every goal, so you always choose on purpose.
+- **Season backup:** **Roster... > Save season backup...** and **Load season backup...** keep the roster, season numbers, goalies and lines in one text file. A copy named `season_backup.txt` is also written to your output folder every time you press End Game.
+- **Time on ice and the clock:** if you change the clock by hand (type a time, add or take away seconds or minutes), the goalie in net's time on ice moves by the same amount, never below zero.
+- **5 on the ice:** the goal window lets you tick at most 5 players.
+- **Penalty minutes (PIM):** when you add a home penalty with a player number that is on the roster, the penalty minutes (2, 4, 5 and so on) are added to that player for the game and the season. `home_pim.txt` lists them. Deleting a penalty by hand (the small clear button or its hotkey) takes its minutes back off the player, for the game and the season. A penalty that runs out on its own, or is ended by an away goal, keeps its minutes. Adding a home penalty now shows your roster as tick boxes (pick one player) instead of a number box.
+- **Away goal ends a home minor:** when the away team scores while your team is short-handed, the first running minor ends. A 2 minute penalty is removed, a 4 minute penalty drops to 2, and a 2+2 moves to its second part. Majors (5 minutes or more) never end this way, and nothing happens when both teams have the same number of penalties (4 on 4). Taking the goal back does not bring the penalty back. Turn this off with **Roster... > Away goal ends a home minor penalty**.
+- **Points per game (PPG):** `home_ppg.txt` lists each player's points divided by games played. A game counts only after you press **End Game**, so the number does not jump around during a game.
+- **End Game:** press **End Game...** in the dock and confirm. Everyone in today's lineup gets one game played, goalies who were in net get one too, and a summary of the score, shots, faceoffs, every player's game and season numbers and every goalie's numbers is written to `game_summary.txt` in your output folder. A dated copy (like `game_summary_2026-10-09_193000.txt`) is saved next to it so the next game does not overwrite it. If you press New Game before ending, the dock asks if you want to end the game first.
+- **Fixing the last game:** **Reopen Last Game...** undoes End Game (the games played are taken off) so you can fix goals, assists, shots or anything else, then press End Game again. If you already pressed New Game, it also brings back that game's score, shots, faceoffs and player and goalie numbers, and drops anything done since. This is remembered even after OBS is closed.
 
 ## Hotkeys
 

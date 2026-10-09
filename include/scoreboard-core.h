@@ -64,6 +64,8 @@ struct scoreboard_penalty {
 	int remaining_tenths;
 	bool active;
 	int phase2_tenths; /* 0 = no second phase (compound penalties) */
+	bool major;        /* 5 minutes or more: a goal against does not end it */
+	int pim_minutes;   /* penalty minutes this penalty added to the player */
 };
 
 /* Lifecycle */
@@ -189,6 +191,9 @@ int scoreboard_home_penalty_add(int player_number, int duration_secs);
 int scoreboard_home_penalty_add_compound(int player_number, int phase1_secs,
 					 int phase2_secs);
 void scoreboard_home_penalty_clear(int slot);
+/* Delete a home penalty by hand: like clear, but the penalty minutes it added
+ * to the player (game and season) are taken back, and the slots are packed. */
+void scoreboard_home_penalty_remove(int slot);
 void scoreboard_home_penalty_set_time(int slot, int duration_secs);
 const struct scoreboard_penalty *scoreboard_get_home_penalty(int slot);
 int scoreboard_get_home_penalty_count(void);
@@ -266,60 +271,259 @@ void scoreboard_format_strength(char *buf, size_t size);
 void scoreboard_preview_strength_label(const char *fmt, char *buf,
 				       size_t size);
 
-/* Player roster and plus/minus (+/-)
+/* Home player roster, plus/minus (+/-), goals and assists
  *
- * Each team has a roster of up to SCOREBOARD_MAX_ROSTER players, identified
- * by jersey number. Players marked "on ice" are credited when a goal is
- * scored: the scoring team's on-ice players get +1 and the other team's
- * on-ice players get -1. Power-play goals are skipped by default.
- * `home` selects the team (true = home, false = away). */
+ * Only the home team's players are tracked, by jersey number (up to
+ * SCOREBOARD_MAX_ROSTER). After a goal, the front end says who was on the ice
+ * (scoreboard_set_goal_on_ice): a home goal gives them +1 and an away goal
+ * gives them -1. Goals during a penalty are skipped by default.
+ *
+ * Every stat has a game value and a season value. Game values are cleared by
+ * scoreboard_new_game(); season values keep adding up. Changing a game value
+ * (a goal, or a manual edit) moves the season value by the same amount. */
 #define SCOREBOARD_MAX_ROSTER 30
 #define SCOREBOARD_MAX_PLAYER_NUMBER 999
+/* Most players that can be named as on the ice for one goal. */
+#define SCOREBOARD_MAX_ON_ICE 5
+#define SCOREBOARD_MAX_GOALIES 4
 
 struct scoreboard_player {
 	int number;
-	bool on_ice;
 	int plus_minus;
+	int goals;
+	int assists;
+	int season_plus_minus;
+	int season_goals;
+	int season_assists;
+	int pim;        /* penalty minutes this game */
+	int season_pim;
+	int games;      /* games finished with End Game that this player was in */
+	bool out;       /* not in today's lineup (see scoreboard_player_set_dressed) */
 };
 
 /* Returns the roster slot, or -1 if the number is out of range or the roster
  * is full. Adding a number already on the roster returns its existing slot. */
-int scoreboard_roster_add(bool home, int number);
-bool scoreboard_roster_remove(bool home, int number);
-void scoreboard_roster_clear(bool home);
-int scoreboard_roster_count(bool home);
+int scoreboard_roster_add(int number);
+bool scoreboard_roster_remove(int number);
+void scoreboard_roster_clear(void);
+int scoreboard_roster_count(void);
 /* Players are listed in the order they were added; NULL if index is out of range. */
-const struct scoreboard_player *scoreboard_roster_get(bool home, int index);
-bool scoreboard_roster_find(bool home, int number);
+const struct scoreboard_player *scoreboard_roster_get(int index);
+bool scoreboard_roster_find(int number);
 
-bool scoreboard_player_set_on_ice(bool home, int number, bool on_ice);
-bool scoreboard_player_toggle_on_ice(bool home, int number);
-void scoreboard_roster_clear_on_ice(bool home);
-int scoreboard_roster_on_ice_count(bool home);
+/* Manual correction of game values (the season value moves with them).
+ * All return false if the player is not on the roster. Goals and assists
+ * below zero are stored as zero. */
+bool scoreboard_player_adjust_plus_minus(int number, int delta);
+bool scoreboard_player_set_plus_minus(int number, int value);
+bool scoreboard_player_set_goals(int number, int goals);
+bool scoreboard_player_set_assists(int number, int assists);
+/* Type in the season values directly. */
+bool scoreboard_player_set_season(int number, int plus_minus, int goals,
+				  int assists);
+/* Return 0 if the player is not on the roster. */
+int scoreboard_player_get_plus_minus(int number);
+int scoreboard_player_get_goals(int number);
+int scoreboard_player_get_assists(int number);
+/* Zero every player's game values (season values stay). */
+void scoreboard_roster_reset_game_stats(void);
+/* Zero every player's season values (game values stay). */
+void scoreboard_roster_reset_season_stats(void);
 
-/* Manual correction. Returns false if the player is not on the roster. */
-bool scoreboard_player_adjust_plus_minus(bool home, int number, int delta);
-/* Returns 0 if the player is not on the roster. */
-int scoreboard_player_get_plus_minus(bool home, int number);
-void scoreboard_roster_reset_plus_minus(bool home);
-
-/* When true (default), goals scored while the scoring team has more players
- * on the ice than the opponent (power play) do not change plus/minus. */
+/* When true (default), goals scored while a penalty is active on either team
+ * do not change plus/minus for anyone. */
 void scoreboard_set_plus_minus_skip_power_play(bool skip);
 bool scoreboard_get_plus_minus_skip_power_play(void);
 
-/* Compact text form of a roster ("number:on_ice:plus_minus,...") so a front
- * end can keep it across restarts. from_string replaces the roster; entries
- * that cannot be read are skipped. */
-void scoreboard_roster_to_string(bool home, char *buf, size_t size);
-void scoreboard_roster_from_string(bool home, const char *text);
+/* Credit the most recent home goal to a scorer and up to two assists (pass
+ * -1 for "nobody"). Crediting the same goal again replaces the earlier
+ * credit, and taking the goal back with scoreboard_decrement_home_score()
+ * removes it. Returns false, changing nothing, if a number is not on the
+ * roster or the same player is named twice. */
+bool scoreboard_credit_goal(int scorer, int assist1, int assist2);
+/* Say who was on the ice for the latest goal by a team (home_scored = true
+ * for a home goal). A home goal gives those players +1 and an away goal gives
+ * them -1. Calling it again for the same goal replaces the earlier answer, and
+ * taking the goal back with scoreboard_decrement_*_score() reverses it.
+ * Numbers not on the roster and repeated numbers are ignored. Nobody gets
+ * anything if a penalty was active when the goal was scored and the skip
+ * setting is on. Returns false if no such goal is in the history. Until this
+ * is called for a goal, nobody gets plus/minus for it. */
+bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
+				int count);
+/* Copies the numbers last given for that goal into `numbers` (at most `max`)
+ * and returns how many; 0 if none or no such goal. */
+int scoreboard_get_goal_on_ice(bool home_scored, int *numbers, int max);
+/* True if the latest goal by that team gets no plus/minus because a penalty
+ * was active. */
+bool scoreboard_goal_has_no_plus_minus(bool home_scored);
+/* Who got the latest credited goal still in the history; false if none. */
+bool scoreboard_get_last_goal(int *scorer, int *assist1, int *assist2);
+/* "Eagles goal: #12 (assists: #7, #9)"; empty if no credited goal. */
+void scoreboard_format_last_goal(char *buf, size_t size);
+
+/* Compact text form of the roster
+ * ("number:0:pm:goals:assists:season_pm:season_goals:season_assists,...";
+ * the second slot is unused and kept for older saves)
+ * so a front end can keep it across restarts. from_string replaces the
+ * roster; entries that cannot be read are skipped, and shorter older forms
+ * still load (the season values then start from the game values). */
+void scoreboard_roster_to_string(char *buf, size_t size);
+void scoreboard_roster_from_string(const char *text);
 
 /* "+2", "-1" or "0" */
 void scoreboard_format_plus_minus(int value, char *buf, size_t size);
-/* One "#12  +2" line per roster player (all=true) or per on-ice player
- * (all=false), separated by newlines. */
-void scoreboard_format_plus_minus_lines(bool home, bool all, char *buf,
-					size_t size);
+/* One "#12    +2" line per roster player, separated by newlines.
+ * season=true uses season values. */
+void scoreboard_format_plus_minus_lines(bool season, char *buf, size_t size);
+/* One "#12   1G  2A  3P" line per player. The game list only has players
+ * with a goal or assist; the season list (season=true) has everyone. */
+void scoreboard_format_scoring_lines(bool season, char *buf, size_t size);
+
+/* ---- today's lineup ---- */
+
+/* Everyone on the roster is dressed (in today's lineup) by default. Players
+ * who are out are left out of the goal and penalty windows and do not get a
+ * game played at End Game. The lineup is kept from game to game until
+ * changed. */
+bool scoreboard_player_set_dressed(int number, bool dressed);
+bool scoreboard_player_is_dressed(int number);
+void scoreboard_roster_set_all_dressed(bool dressed);
+int scoreboard_roster_dressed_count(void);
+
+/* ---- forward lines and defence pairs ---- */
+
+/* A line is a named group of jersey numbers (forwards: up to 3, defence: up
+ * to 2) that the goal window can tick all at once. Names are worked out from
+ * the order: F1, F2... and D1, D2... */
+#define SCOREBOARD_MAX_LINES 12
+#define SCOREBOARD_MAX_LINE_PLAYERS 3
+struct scoreboard_line {
+	bool defence;
+	int count;
+	int numbers[SCOREBOARD_MAX_LINE_PLAYERS];
+};
+/* Returns the new line's index, or -1 for a bad group or a full list. */
+int scoreboard_line_add(bool defence, const int *numbers, int count);
+/* Replace the players of an existing line (it stays forward or defence). */
+bool scoreboard_line_set(int index, const int *numbers, int count);
+bool scoreboard_line_remove(int index);
+void scoreboard_line_clear(void);
+int scoreboard_line_count(void);
+const struct scoreboard_line *scoreboard_line_get(int index);
+/* "F1", "D2"; empty for a bad index. */
+void scoreboard_format_line_name(int index, char *buf, size_t size);
+/* "F:4.7.12,D:2.5" */
+void scoreboard_lines_to_string(char *buf, size_t size);
+void scoreboard_lines_from_string(const char *text);
+
+/* ---- backups ---- */
+
+/* Save or load the roster, season numbers, goalies, lines and the two rule
+ * settings in one text file. Importing replaces what is there. End Game also
+ * writes season_backup.txt into the output folder. */
+bool scoreboard_export_backup(const char *path);
+bool scoreboard_import_backup(const char *path);
+
+/* ---- penalty minutes, points per game ---- */
+
+/* Penalty minutes are added when a home penalty is added with a player number
+ * that is on the roster. Taking a penalty off the clock later does not remove
+ * them; fix them by hand with these calls. Game edits move the season value. */
+bool scoreboard_player_set_pim(int number, int pim);
+int scoreboard_player_get_pim(int number);
+bool scoreboard_player_set_season_pim(int number, int pim);
+bool scoreboard_player_set_games(int number, int games);
+/* "#12   4 game   18 season" for players with any penalty minutes. */
+void scoreboard_format_pim_lines(char *buf, size_t size);
+/* Points per game over finished games, e.g. "#12  1.50". Everyone on the
+ * roster is listed. A game in progress is not counted until End Game. */
+void scoreboard_format_ppg_lines(char *buf, size_t size);
+/* One player's points per game, 0 if not on the roster or no games yet. */
+double scoreboard_player_get_ppg(int number);
+
+/* When true (default), a goal by the away team ends the first running home
+ * minor penalty: a 2 minute penalty is removed, a 4 minute one drops to 2,
+ * a 2+2 moves on to its second part. Majors (5+) are never ended, and nothing
+ * happens when the away team is not a man up. */
+void scoreboard_set_away_goal_ends_penalty(bool enabled);
+bool scoreboard_get_away_goal_ends_penalty(void);
+
+/* ---- goalies ---- */
+
+/* Goalies are kept apart from skaters: shots against (SA), goals against
+ * (GA) and save percentage only. The goalie in net gets every away shot and
+ * away goal that is added with the +/- buttons or hotkeys. Typing a total
+ * directly does not change goalie numbers. */
+struct scoreboard_goalie {
+	int number;
+	int shots_against;
+	int goals_against;
+	int season_shots_against;
+	int season_goals_against;
+	int games;
+	int toi_tenths;        /* time on ice (in net) this game, tenths of a second */
+	int season_toi_tenths;
+	bool played; /* was in net this game */
+};
+
+int scoreboard_goalie_add(int number);
+bool scoreboard_goalie_remove(int number);
+void scoreboard_goalie_clear(void);
+int scoreboard_goalie_count(void);
+const struct scoreboard_goalie *scoreboard_goalie_get(int index);
+bool scoreboard_goalie_find(int number);
+/* Who is in net; pass -1 for nobody. False if the number is not a goalie. */
+bool scoreboard_set_goalie_in_net(int number);
+int scoreboard_get_goalie_in_net(void);
+/* Manual corrections of game values (the season value moves with them). */
+bool scoreboard_goalie_set_shots_against(int number, int value);
+bool scoreboard_goalie_set_goals_against(int number, int value);
+bool scoreboard_goalie_set_season(int number, int sa, int ga, int games);
+/* Time on ice: counts up while the game clock runs and this goalie is in
+ * net. Manual corrections take seconds; a game change moves the season too. */
+bool scoreboard_goalie_set_toi_seconds(int number, int seconds);
+bool scoreboard_goalie_set_season_toi_seconds(int number, int seconds);
+/* "34:12" (minutes can go past 60 for a season). */
+void scoreboard_format_toi(int tenths, char *buf, size_t size);
+/* ".923", or "-" with no shots against. */
+void scoreboard_format_save_percentage(int shots_against, int goals_against,
+				       char *buf, size_t size);
+/* "#31  SA  25  GA  2  SV% .920  TOI 34:12" per goalie (season=true for season). */
+void scoreboard_format_goalie_lines(bool season, char *buf, size_t size);
+/* The goalie in net, same line format; empty with nobody in net. */
+void scoreboard_format_goalie_in_net(char *buf, size_t size);
+/* Compact form like the roster one, with the goalie in net at the end:
+ * "number:sa:ga:season_sa:season_ga:games:played:toi:season_toi,...;in_net". */
+void scoreboard_goalies_to_string(char *buf, size_t size);
+void scoreboard_goalies_from_string(const char *text);
+
+/* ---- faceoff percentage ---- */
+
+/* Home faceoff wins out of all faceoffs: "12/20 (60%)", "0/0" if none. */
+int scoreboard_get_home_faceoff_percent(void);
+void scoreboard_format_home_faceoff_percent(char *buf, size_t size);
+
+/* ---- end of game ---- */
+
+/* Finish the game: everyone in `played` (jersey numbers) and every goalie who
+ * was in net gets one more game for points per game, and a summary is written
+ * to game_summary.txt (plus a dated copy) in the output directory. Returns
+ * false if the game was already ended. */
+bool scoreboard_end_game(const int *played, int count);
+bool scoreboard_game_is_ended(void);
+/* The summary text itself. */
+void scoreboard_format_game_summary(char *buf, size_t size);
+/* Undo End Game, and if New Game was pressed since, bring the last game back
+ * (scores, shots, faceoffs, roster and goalie numbers). What was done after
+ * New Game is dropped. The memory is kept only until OBS closes. */
+bool scoreboard_can_reopen_last_game(void);
+/* The memory behind Reopen Last Game as one line of text, so a front end can
+ * keep it across a restart. The revision goes up whenever it changes. */
+int scoreboard_reopen_revision(void);
+void scoreboard_reopen_memory_to_string(char *buf, size_t size);
+void scoreboard_reopen_memory_from_string(const char *text);
+bool scoreboard_reopen_last_game(void);
 
 /* Action log */
 void scoreboard_add_action_log(const char *message);
