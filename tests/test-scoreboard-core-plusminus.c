@@ -253,8 +253,9 @@ static void test_no_plus_minus_while_a_penalty_is_active(void)
 	assert(scoreboard_get_goal_on_ice(true, (int[1]){0}, 1) == 0);
 	scoreboard_away_penalty_clear(0);
 
-	/* home penalty: an away goal gives nothing */
-	scoreboard_home_penalty_add(12, 120);
+	/* home penalty (a major, so an away goal does not end it): an away
+	   goal gives nothing */
+	scoreboard_home_penalty_add(12, 300);
 	away_goal(on, 1);
 	assert(player(10)->plus_minus == 0);
 	assert(scoreboard_goal_has_no_plus_minus(false));
@@ -746,8 +747,8 @@ static void test_roster_string_round_trip(void)
 	scoreboard_player_set_season(10, 9, 8, 7);
 
 	scoreboard_roster_to_string(buf, sizeof(buf));
-	assert(strcmp(buf, "10:0:0:2:3:9:8:7,11:0:0:0:0:0:0:0,"
-			   "12:0:-3:0:0:-3:0:0") == 0);
+	assert(strcmp(buf, "10:0:0:2:3:9:8:7:0:0:0,11:0:0:0:0:0:0:0:0:0:0,"
+			   "12:0:-3:0:0:-3:0:0:0:0:0") == 0);
 
 	scoreboard_roster_clear();
 	scoreboard_roster_to_string(buf, sizeof(buf));
@@ -770,12 +771,12 @@ static void test_roster_string_round_trip(void)
 
 static void test_roster_string_truncates_cleanly(void)
 {
-	char buf[20];
+	char buf[24];
 	char zero[1] = {'x'};
 	setup_roster();
-	/* "10:0:0:0:0:0:0:0" is 16 chars; a second entry would not fit. */
+	/* "10:0:0:0:0:0:0:0:0:0:0" is 22 chars; a second entry would not fit. */
 	scoreboard_roster_to_string(buf, sizeof(buf));
-	assert(strcmp(buf, "10:0:0:0:0:0:0:0") == 0);
+	assert(strcmp(buf, "10:0:0:0:0:0:0:0:0:0:0") == 0);
 	scoreboard_roster_to_string(zero, 0);
 	assert(zero[0] == 'x');
 }

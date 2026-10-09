@@ -64,6 +64,7 @@ struct scoreboard_penalty {
 	int remaining_tenths;
 	bool active;
 	int phase2_tenths; /* 0 = no second phase (compound penalties) */
+	bool major;        /* 5 minutes or more: a goal against does not end it */
 };
 
 /* Lifecycle */
@@ -278,6 +279,9 @@ void scoreboard_preview_strength_label(const char *fmt, char *buf,
  * (a goal, or a manual edit) moves the season value by the same amount. */
 #define SCOREBOARD_MAX_ROSTER 30
 #define SCOREBOARD_MAX_PLAYER_NUMBER 999
+/* Most players that can be named as on the ice for one goal. */
+#define SCOREBOARD_MAX_ON_ICE 5
+#define SCOREBOARD_MAX_GOALIES 4
 
 struct scoreboard_player {
 	int number;
@@ -287,6 +291,9 @@ struct scoreboard_player {
 	int season_plus_minus;
 	int season_goals;
 	int season_assists;
+	int pim;        /* penalty minutes this game */
+	int season_pim;
+	int games;      /* games finished with End Game that this player was in */
 };
 
 /* Returns the roster slot, or -1 if the number is out of range or the roster
@@ -367,6 +374,91 @@ void scoreboard_format_plus_minus_lines(bool season, char *buf, size_t size);
 /* One "#12   1G  2A  3P" line per player. The game list only has players
  * with a goal or assist; the season list (season=true) has everyone. */
 void scoreboard_format_scoring_lines(bool season, char *buf, size_t size);
+
+/* ---- penalty minutes, points per game ---- */
+
+/* Penalty minutes are added when a home penalty is added with a player number
+ * that is on the roster. Taking a penalty off the clock later does not remove
+ * them; fix them by hand with these calls. Game edits move the season value. */
+bool scoreboard_player_set_pim(int number, int pim);
+int scoreboard_player_get_pim(int number);
+bool scoreboard_player_set_season_pim(int number, int pim);
+bool scoreboard_player_set_games(int number, int games);
+/* "#12   4 game   18 season" for players with any penalty minutes. */
+void scoreboard_format_pim_lines(char *buf, size_t size);
+/* Points per game over finished games, e.g. "#12  1.50". Everyone on the
+ * roster is listed. A game in progress is not counted until End Game. */
+void scoreboard_format_ppg_lines(char *buf, size_t size);
+
+/* When true (default), a goal by the away team ends the first running home
+ * minor penalty: a 2 minute penalty is removed, a 4 minute one drops to 2,
+ * a 2+2 moves on to its second part. Majors (5+) are never ended, and nothing
+ * happens when the away team is not a man up. */
+void scoreboard_set_away_goal_ends_penalty(bool enabled);
+bool scoreboard_get_away_goal_ends_penalty(void);
+
+/* ---- goalies ---- */
+
+/* Goalies are kept apart from skaters: shots against (SA), goals against
+ * (GA) and save percentage only. The goalie in net gets every away shot and
+ * away goal that is added with the +/- buttons or hotkeys. Typing a total
+ * directly does not change goalie numbers. */
+struct scoreboard_goalie {
+	int number;
+	int shots_against;
+	int goals_against;
+	int season_shots_against;
+	int season_goals_against;
+	int games;
+	bool played; /* was in net this game */
+};
+
+int scoreboard_goalie_add(int number);
+bool scoreboard_goalie_remove(int number);
+void scoreboard_goalie_clear(void);
+int scoreboard_goalie_count(void);
+const struct scoreboard_goalie *scoreboard_goalie_get(int index);
+bool scoreboard_goalie_find(int number);
+/* Who is in net; pass -1 for nobody. False if the number is not a goalie. */
+bool scoreboard_set_goalie_in_net(int number);
+int scoreboard_get_goalie_in_net(void);
+/* Manual corrections of game values (the season value moves with them). */
+bool scoreboard_goalie_set_shots_against(int number, int value);
+bool scoreboard_goalie_set_goals_against(int number, int value);
+bool scoreboard_goalie_set_season(int number, int sa, int ga, int games);
+/* ".923", or "-" with no shots against. */
+void scoreboard_format_save_percentage(int shots_against, int goals_against,
+				       char *buf, size_t size);
+/* "#31   SA 25   GA 2   SV% .920" per goalie (season=true for season). */
+void scoreboard_format_goalie_lines(bool season, char *buf, size_t size);
+/* The goalie in net, same line format; empty with nobody in net. */
+void scoreboard_format_goalie_in_net(char *buf, size_t size);
+/* Compact form like the roster one, with the goalie in net at the end:
+ * "number:sa:ga:season_sa:season_ga:games:played,...;in_net". */
+void scoreboard_goalies_to_string(char *buf, size_t size);
+void scoreboard_goalies_from_string(const char *text);
+
+/* ---- faceoff percentage ---- */
+
+/* Home faceoff wins out of all faceoffs: "12/20 (60%)", "0/0" if none. */
+int scoreboard_get_home_faceoff_percent(void);
+void scoreboard_format_home_faceoff_percent(char *buf, size_t size);
+
+/* ---- end of game ---- */
+
+/* Finish the game: everyone in `played` (jersey numbers) and every goalie who
+ * was in net gets one more game for points per game, and a summary is written
+ * to game_summary.txt (plus a dated copy) in the output directory. Returns
+ * false if the game was already ended. */
+bool scoreboard_end_game(const int *played, int count);
+bool scoreboard_game_is_ended(void);
+/* The summary text itself. */
+void scoreboard_format_game_summary(char *buf, size_t size);
+/* Undo End Game, and if New Game was pressed since, bring the last game back
+ * (scores, shots, faceoffs, roster and goalie numbers). What was done after
+ * New Game is dropped. The memory is kept only until OBS closes. */
+bool scoreboard_can_reopen_last_game(void);
+bool scoreboard_reopen_last_game(void);
 
 /* Action log */
 void scoreboard_add_action_log(const char *message);
