@@ -846,19 +846,21 @@ static void test_goalie_time_on_ice(void)
 	assert(goalie(35)->toi_tenths == 50 && goalie(31)->toi_tenths == 350);
 
 	/* only the time left on the clock counts when it runs out */
-	scoreboard_clock_set_tenths(30);
+	scoreboard_clock_tick(0);
+	scoreboard_clock_adjust_seconds(-849); /* clock now 10 tenths */
+	assert(goalie(35)->toi_tenths == 50 + 8490);
 	scoreboard_clock_tick(100);
-	assert(goalie(35)->toi_tenths == 80);
+	assert(goalie(35)->toi_tenths == 50 + 8500);
 	assert(!scoreboard_clock_is_running());
 	scoreboard_clock_tick(100); /* stopped clock: nothing */
-	assert(goalie(35)->toi_tenths == 80);
+	assert(goalie(35)->toi_tenths == 8550);
 
 	/* counting up works too */
 	scoreboard_set_clock_direction(SCOREBOARD_CLOCK_COUNT_UP);
 	scoreboard_clock_set_tenths(0);
 	scoreboard_clock_start();
 	scoreboard_clock_tick(20);
-	assert(goalie(35)->toi_tenths == 100);
+	assert(goalie(35)->toi_tenths == 8570);
 
 	scoreboard_format_toi(0, buf, sizeof(buf));
 	assert(strcmp(buf, "0:00") == 0);
@@ -977,6 +979,299 @@ static void test_deleting_a_penalty_after_reading_files_or_loading(void)
 	cleanup_tmp_dir();
 }
 
+/* ---- time on ice follows manual clock changes ---- */
+
+static void test_goalie_time_follows_manual_clock_changes(void)
+{
+	setup();
+	scoreboard_clock_set_tenths(6000); /* 10:00 counting down */
+
+	/* nobody in net: no change, and no change for a zero move */
+	scoreboard_clock_set_tenths(5000);
+	assert(goalie(31)->toi_tenths == 0);
+	scoreboard_set_goalie_in_net(31);
+	scoreboard_clock_set_tenths(5000);
+	assert(goalie(31)->toi_tenths == 0);
+
+	/* the clock jumps forward 10 seconds: ten more seconds of game */
+	scoreboard_clock_adjust_seconds(-10);
+	assert(goalie(31)->toi_tenths == 100);
+	assert(goalie(31)->season_toi_tenths == 100);
+	/* the clock is put back 4 seconds: four seconds are taken away */
+	scoreboard_clock_adjust_seconds(4);
+	assert(goalie(31)->toi_tenths == 60);
+	scoreboard_clock_adjust_minutes(-1);
+	assert(goalie(31)->toi_tenths == 660);
+	scoreboard_clock_adjust_minutes(5);
+	assert(goalie(31)->toi_tenths == 0); /* never below zero */
+	assert(goalie(31)->season_toi_tenths == 0);
+
+	/* a clock that cannot move past zero only moves the time it moved */
+	scoreboard_clock_set_tenths(100);
+	const int before = goalie(31)->toi_tenths;
+	scoreboard_clock_set_tenths(0);
+	assert(goalie(31)->toi_tenths == before + 100);
+	scoreboard_clock_adjust_seconds(-5);
+	assert(goalie(31)->toi_tenths == before + 100);
+
+	/* counting up: the clock and the time move together */
+	scoreboard_reset_state_for_tests();
+	scoreboard_goalie_add(31);
+	scoreboard_set_clock_direction(SCOREBOARD_CLOCK_COUNT_UP);
+	scoreboard_clock_set_tenths(0);
+	scoreboard_set_goalie_in_net(31);
+	scoreboard_clock_adjust_seconds(30);
+	assert(goalie(31)->toi_tenths == 300);
+	scoreboard_clock_set_tenths(100);
+	assert(goalie(31)->toi_tenths == 100);
+	scoreboard_clock_adjust_minutes(1);
+	assert(goalie(31)->toi_tenths == 700);
+}
+
+/* ---- today's lineup ---- */
+
+static void test_todays_lineup(void)
+{
+	char buf[128];
+	setup();
+	assert(scoreboard_roster_dressed_count() == 3);
+	assert(scoreboard_player_is_dressed(10));
+	assert(!scoreboard_player_set_dressed(99, false));
+	assert(!scoreboard_player_is_dressed(99));
+	assert(scoreboard_player_set_dressed(11, false));
+	assert(!scoreboard_player_is_dressed(11));
+	assert(scoreboard_roster_dressed_count() == 2);
+
+	scoreboard_roster_to_string(buf, sizeof(buf));
+	assert(strstr(buf, "11:0:0:0:0:0:0:0:0:0:0:1") != NULL);
+	scoreboard_roster_set_all_dressed(true);
+	assert(scoreboard_roster_dressed_count() == 3);
+	scoreboard_player_set_dressed(12, false);
+	scoreboard_roster_to_string(buf, sizeof(buf));
+	scoreboard_roster_clear();
+	scoreboard_roster_from_string(buf);
+	assert(!scoreboard_player_is_dressed(12));
+	assert(scoreboard_player_is_dressed(10));
+	scoreboard_roster_set_all_dressed(false);
+	assert(scoreboard_roster_dressed_count() == 0);
+
+	/* only dressed players get a game at End Game */
+	scoreboard_roster_set_all_dressed(true);
+	scoreboard_player_set_dressed(12, false);
+	scoreboard_increment_home_score();
+	char summary[1024];
+	scoreboard_format_game_summary(summary, sizeof(summary));
+	char *season_part = strstr(summary, "SEASON TO DATE");
+	assert(season_part != NULL);
+	*season_part = '\0';
+	assert(strstr(summary, "#10") != NULL && strstr(summary, "#12") == NULL);
+	const int played[2] = {10, 11};
+	scoreboard_end_game(played, 2);
+	assert(player(10)->games == 1 && player(11)->games == 1);
+	assert(player(12)->games == 0);
+
+	/* it is kept in the saved state */
+	setup_tmp_dir();
+	char path[512];
+	snprintf(path, sizeof(path), "%s/state.json", g_tmp_dir);
+	assert(scoreboard_save_state(path));
+	scoreboard_roster_set_all_dressed(true);
+	assert(scoreboard_load_state(path));
+	assert(!scoreboard_player_is_dressed(12));
+	cleanup_tmp_dir();
+}
+
+/* ---- forward lines and defence pairs ---- */
+
+static void test_lines(void)
+{
+	char buf[128];
+	const int fwd[3] = {4, 7, 12};
+	const int dee[2] = {2, 5};
+	const int three[3] = {1, 2, 3};
+	const int dup[2] = {4, 4};
+	const int neg[1] = {-1};
+	const int big[1] = {1000};
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_line_count() == 0);
+	assert(scoreboard_line_get(0) == NULL);
+	assert(scoreboard_line_get(-1) == NULL);
+	assert(scoreboard_line_add(false, fwd, 3) == 0);
+	assert(scoreboard_line_add(true, dee, 2) == 1);
+	assert(scoreboard_line_add(false, fwd, 2) == 2);
+	assert(scoreboard_line_add(true, three, 3) == -1); /* pair of 3 */
+	assert(scoreboard_line_add(false, fwd, 4) == -1);
+	assert(scoreboard_line_add(false, fwd, 0) == -1);
+	assert(scoreboard_line_add(false, dup, 2) == -1);
+	assert(scoreboard_line_add(false, neg, 1) == -1);
+	assert(scoreboard_line_add(false, big, 1) == -1);
+	assert(scoreboard_line_count() == 3);
+	assert(scoreboard_line_get(1)->defence);
+	assert(scoreboard_line_get(0)->count == 3);
+
+	scoreboard_format_line_name(0, buf, sizeof(buf));
+	assert(strcmp(buf, "F1") == 0);
+	scoreboard_format_line_name(1, buf, sizeof(buf));
+	assert(strcmp(buf, "D1") == 0);
+	scoreboard_format_line_name(2, buf, sizeof(buf));
+	assert(strcmp(buf, "F2") == 0);
+	scoreboard_format_line_name(9, buf, sizeof(buf));
+	assert(buf[0] == '\0');
+	char zero[1] = {'x'};
+	scoreboard_format_line_name(0, zero, 0);
+	assert(zero[0] == 'x');
+
+	assert(!scoreboard_line_set(9, fwd, 3));
+	assert(!scoreboard_line_set(-1, fwd, 3));
+	assert(!scoreboard_line_set(1, three, 3)); /* defence stays a pair */
+	assert(scoreboard_line_set(1, dee, 1));
+	assert(scoreboard_line_get(1)->count == 1);
+
+	scoreboard_lines_to_string(buf, sizeof(buf));
+	assert(strcmp(buf, "F:4.7.12,D:2,F:4.7") == 0);
+	char small[8];
+	scoreboard_lines_to_string(small, sizeof(small));
+	assert(strcmp(small, "F:4.7.1") != 0);
+	assert(strcmp(small, "F:4.7.12") != 0 || sizeof(small) > 8);
+	scoreboard_lines_to_string(zero, 0);
+	assert(zero[0] == 'x');
+
+	assert(scoreboard_line_remove(1));
+	assert(!scoreboard_line_remove(5));
+	assert(scoreboard_line_count() == 2);
+	scoreboard_format_line_name(1, buf, sizeof(buf));
+	assert(strcmp(buf, "F2") == 0);
+
+	scoreboard_lines_from_string("F:4.7.12,D:2.5,junk,X:1,F:,F:1.2.3.4.5,D:9");
+	assert(scoreboard_line_count() == 3);
+	assert(scoreboard_line_get(0)->count == 3);
+	assert(scoreboard_line_get(1)->defence && scoreboard_line_get(1)->count == 2);
+	assert(scoreboard_line_get(2)->defence && scoreboard_line_get(2)->numbers[0] == 9);
+	scoreboard_lines_from_string(NULL);
+	assert(scoreboard_line_count() == 0);
+
+	for (int i = 0; i < SCOREBOARD_MAX_LINES; i++)
+		assert(scoreboard_line_add(false, fwd, 1) == i);
+	assert(scoreboard_line_add(false, fwd, 1) == -1);
+	scoreboard_line_clear();
+	assert(scoreboard_line_count() == 0);
+}
+
+/* ---- backup file ---- */
+
+static void test_backup_export_and_import(void)
+{
+	char path[512];
+	char buf[256];
+	const int fwd[2] = {10, 11};
+	setup();
+	setup_tmp_dir();
+	scoreboard_player_set_goals(10, 3);
+	scoreboard_player_set_season(10, 1, 4, 2);
+	scoreboard_player_set_dressed(12, false);
+	scoreboard_line_add(false, fwd, 2);
+	scoreboard_set_plus_minus_skip_power_play(true);
+	scoreboard_set_away_goal_ends_penalty(false);
+	snprintf(path, sizeof(path), "%s/backup.txt", g_tmp_dir);
+	assert(scoreboard_export_backup(path));
+	assert(!scoreboard_export_backup("/nonexistent-dir/none.txt"));
+
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_import_backup(path));
+	assert(scoreboard_roster_count() == 3);
+	assert(player(10)->season_goals == 4);
+	assert(!scoreboard_player_is_dressed(12));
+	assert(scoreboard_goalie_count() == 2);
+	assert(scoreboard_line_count() == 1);
+	assert(scoreboard_get_plus_minus_skip_power_play());
+	assert(!scoreboard_get_away_goal_ends_penalty());
+
+	scoreboard_lines_to_string(buf, sizeof(buf));
+	assert(strcmp(buf, "F:10.11") == 0);
+
+	assert(!scoreboard_import_backup("/nonexistent-dir/none.txt"));
+	FILE *f = fopen(path, "w");
+	fprintf(f, "not a backup\nroster=10:0:0:0:0:0:0:0\n");
+	fclose(f);
+	assert(!scoreboard_import_backup(path));
+	f = fopen(path, "w");
+	fclose(f);
+	assert(!scoreboard_import_backup(path));
+	f = fopen(path, "w");
+	fprintf(f, "streamn-scoreboard-backup 1\nfuture_key=1\r\nlines=D:3\n");
+	fclose(f);
+	assert(scoreboard_import_backup(path));
+	assert(scoreboard_line_count() == 1);
+	cleanup_tmp_dir();
+}
+
+static void test_end_game_writes_a_backup(void)
+{
+	setup();
+	setup_tmp_dir();
+	scoreboard_set_output_directory(g_tmp_dir);
+	scoreboard_end_game(NULL, 0);
+	char path[512];
+	snprintf(path, sizeof(path), "%s/season_backup.txt", g_tmp_dir);
+	char *content = read_file_content(path);
+	assert(content != NULL);
+	assert(strncmp(content, "streamn-scoreboard-backup 1", 27) == 0);
+	assert(strstr(content, "roster=10:") != NULL);
+	free(content);
+	cleanup_tmp_dir();
+}
+
+/* ---- reopen memory survives a restart ---- */
+
+static void test_reopen_memory_round_trip(void)
+{
+	char mem[6144];
+	char tiny[1] = {'x'};
+	setup();
+	scoreboard_reopen_memory_to_string(tiny, 0);
+	assert(tiny[0] == 'x');
+	const int rev0 = scoreboard_reopen_revision();
+
+	scoreboard_set_goalie_in_net(31);
+	scoreboard_increment_home_score();
+	scoreboard_increment_away_score();
+	scoreboard_end_game(NULL, 0);
+	assert(scoreboard_reopen_revision() > rev0);
+	scoreboard_new_game();
+	assert(scoreboard_can_reopen_last_game());
+	scoreboard_player_set_goals(10, 7); /* a later change must survive */
+	scoreboard_reopen_memory_to_string(mem, sizeof(mem));
+	assert(strncmp(mem, "v1|1|", 5) == 0);
+
+	/* "restart": a clean state with the same roster, then load the memory */
+	const int rev1 = scoreboard_reopen_revision();
+	scoreboard_reopen_memory_from_string(mem);
+	assert(scoreboard_reopen_revision() > rev1);
+	assert(scoreboard_can_reopen_last_game());
+	assert(player(10)->goals == 7);
+	assert(scoreboard_roster_count() == 3 && scoreboard_goalie_count() == 2);
+	assert(scoreboard_reopen_last_game());
+	assert(scoreboard_get_home_score() == 1 && scoreboard_get_away_score() == 1);
+
+	/* bad text changes nothing */
+	scoreboard_reopen_memory_from_string(NULL);
+	scoreboard_reopen_memory_from_string("");
+	scoreboard_reopen_memory_from_string("v2|1|2|3");
+	scoreboard_reopen_memory_from_string("v1|1|2");
+	const int rev2 = scoreboard_reopen_revision();
+	scoreboard_reopen_memory_from_string("v9|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o");
+	assert(scoreboard_reopen_revision() == rev2);
+}
+
+static void test_reopen_memory_with_nothing_to_reopen(void)
+{
+	char mem[6144];
+	scoreboard_reset_state_for_tests();
+	scoreboard_reopen_memory_to_string(mem, sizeof(mem));
+	scoreboard_reopen_memory_from_string(mem);
+	assert(!scoreboard_can_reopen_last_game());
+}
+
 int main(void)
 {
 	test_goalie_roster();
@@ -1002,6 +1297,13 @@ int main(void)
 	test_goalie_time_on_ice();
 	test_deleting_a_penalty_takes_its_minutes_back();
 	test_deleting_a_penalty_after_reading_files_or_loading();
+	test_goalie_time_follows_manual_clock_changes();
+	test_todays_lineup();
+	test_lines();
+	test_backup_export_and_import();
+	test_end_game_writes_a_backup();
+	test_reopen_memory_round_trip();
+	test_reopen_memory_with_nothing_to_reopen();
 	printf("scoreboard-core goalie tests passed\n");
 	return 0;
 }

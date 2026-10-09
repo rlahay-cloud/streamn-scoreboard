@@ -747,8 +747,8 @@ static void test_roster_string_round_trip(void)
 	scoreboard_player_set_season(10, 9, 8, 7);
 
 	scoreboard_roster_to_string(buf, sizeof(buf));
-	assert(strcmp(buf, "10:0:0:2:3:9:8:7:0:0:0,11:0:0:0:0:0:0:0:0:0:0,"
-			   "12:0:-3:0:0:-3:0:0:0:0:0") == 0);
+	assert(strcmp(buf, "10:0:0:2:3:9:8:7:0:0:0:0,11:0:0:0:0:0:0:0:0:0:0:0,"
+			   "12:0:-3:0:0:-3:0:0:0:0:0:0") == 0);
 
 	scoreboard_roster_clear();
 	scoreboard_roster_to_string(buf, sizeof(buf));
@@ -771,12 +771,12 @@ static void test_roster_string_round_trip(void)
 
 static void test_roster_string_truncates_cleanly(void)
 {
-	char buf[24];
+	char buf[26];
 	char zero[1] = {'x'};
 	setup_roster();
-	/* "10:0:0:0:0:0:0:0:0:0:0" is 22 chars; a second entry would not fit. */
+	/* "10:0:0:0:0:0:0:0:0:0:0:0" is 24 chars; a second entry would not fit. */
 	scoreboard_roster_to_string(buf, sizeof(buf));
-	assert(strcmp(buf, "10:0:0:0:0:0:0:0:0:0:0") == 0);
+	assert(strcmp(buf, "10:0:0:0:0:0:0:0:0:0:0:0") == 0);
 	scoreboard_roster_to_string(zero, 0);
 	assert(zero[0] == 'x');
 }

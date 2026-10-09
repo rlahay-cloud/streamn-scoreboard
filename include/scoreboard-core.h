@@ -298,6 +298,7 @@ struct scoreboard_player {
 	int pim;        /* penalty minutes this game */
 	int season_pim;
 	int games;      /* games finished with End Game that this player was in */
+	bool out;       /* not in today's lineup (see scoreboard_player_set_dressed) */
 };
 
 /* Returns the roster slot, or -1 if the number is out of range or the roster
@@ -378,6 +379,51 @@ void scoreboard_format_plus_minus_lines(bool season, char *buf, size_t size);
 /* One "#12   1G  2A  3P" line per player. The game list only has players
  * with a goal or assist; the season list (season=true) has everyone. */
 void scoreboard_format_scoring_lines(bool season, char *buf, size_t size);
+
+/* ---- today's lineup ---- */
+
+/* Everyone on the roster is dressed (in today's lineup) by default. Players
+ * who are out are left out of the goal and penalty windows and do not get a
+ * game played at End Game. The lineup is kept from game to game until
+ * changed. */
+bool scoreboard_player_set_dressed(int number, bool dressed);
+bool scoreboard_player_is_dressed(int number);
+void scoreboard_roster_set_all_dressed(bool dressed);
+int scoreboard_roster_dressed_count(void);
+
+/* ---- forward lines and defence pairs ---- */
+
+/* A line is a named group of jersey numbers (forwards: up to 3, defence: up
+ * to 2) that the goal window can tick all at once. Names are worked out from
+ * the order: F1, F2... and D1, D2... */
+#define SCOREBOARD_MAX_LINES 12
+#define SCOREBOARD_MAX_LINE_PLAYERS 3
+struct scoreboard_line {
+	bool defence;
+	int count;
+	int numbers[SCOREBOARD_MAX_LINE_PLAYERS];
+};
+/* Returns the new line's index, or -1 for a bad group or a full list. */
+int scoreboard_line_add(bool defence, const int *numbers, int count);
+/* Replace the players of an existing line (it stays forward or defence). */
+bool scoreboard_line_set(int index, const int *numbers, int count);
+bool scoreboard_line_remove(int index);
+void scoreboard_line_clear(void);
+int scoreboard_line_count(void);
+const struct scoreboard_line *scoreboard_line_get(int index);
+/* "F1", "D2"; empty for a bad index. */
+void scoreboard_format_line_name(int index, char *buf, size_t size);
+/* "F:4.7.12,D:2.5" */
+void scoreboard_lines_to_string(char *buf, size_t size);
+void scoreboard_lines_from_string(const char *text);
+
+/* ---- backups ---- */
+
+/* Save or load the roster, season numbers, goalies, lines and the two rule
+ * settings in one text file. Importing replaces what is there. End Game also
+ * writes season_backup.txt into the output folder. */
+bool scoreboard_export_backup(const char *path);
+bool scoreboard_import_backup(const char *path);
 
 /* ---- penalty minutes, points per game ---- */
 
@@ -472,6 +518,11 @@ void scoreboard_format_game_summary(char *buf, size_t size);
  * (scores, shots, faceoffs, roster and goalie numbers). What was done after
  * New Game is dropped. The memory is kept only until OBS closes. */
 bool scoreboard_can_reopen_last_game(void);
+/* The memory behind Reopen Last Game as one line of text, so a front end can
+ * keep it across a restart. The revision goes up whenever it changes. */
+int scoreboard_reopen_revision(void);
+void scoreboard_reopen_memory_to_string(char *buf, size_t size);
+void scoreboard_reopen_memory_from_string(const char *text);
 bool scoreboard_reopen_last_game(void);
 
 /* Action log */
