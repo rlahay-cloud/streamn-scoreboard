@@ -709,6 +709,12 @@ static void goalie_take_back_goal(int number)
 		return;
 	g->goals_against = clamp_zero(g->goals_against - 1);
 	g->season_goals_against = clamp_zero(g->season_goals_against - 1);
+	/* The goal counted as a shot too. */
+	if (g->shots_against > 0) {
+		g->shots_against--;
+		g->season_shots_against =
+			clamp_zero(g->season_shots_against - 1);
+	}
 }
 
 bool scoreboard_goalie_set_shots_against(int number, int value)
@@ -2215,6 +2221,8 @@ void scoreboard_set_home_score(int score)
 void scoreboard_increment_home_score(void)
 {
 	g_state.home_score++;
+	/* A goal is also a shot on goal. */
+	g_state.home_shots++;
 	pm_record_goal(true);
 	mark_dirty();
 }
@@ -2223,6 +2231,8 @@ void scoreboard_decrement_home_score(void)
 {
 	if (g_state.home_score > 0) {
 		g_state.home_score--;
+		if (g_state.home_shots > 0)
+			g_state.home_shots--;
 		pm_undo_goal(true);
 	}
 	mark_dirty();
@@ -2246,6 +2256,9 @@ void scoreboard_set_away_score(int score)
 void scoreboard_increment_away_score(void)
 {
 	g_state.away_score++;
+	/* A goal is also a shot on goal, against the goalie in net. */
+	g_state.away_shots++;
+	goalie_add_shot(1);
 	pm_record_goal(false);
 	release_home_minor_for_goal();
 	mark_dirty();
@@ -2255,6 +2268,8 @@ void scoreboard_decrement_away_score(void)
 {
 	if (g_state.away_score > 0) {
 		g_state.away_score--;
+		if (g_state.away_shots > 0)
+			g_state.away_shots--;
 		pm_undo_goal(false);
 	}
 	mark_dirty();

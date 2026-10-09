@@ -149,15 +149,19 @@ static void test_shots_and_goals_go_to_the_goalie_in_net(void)
 	scoreboard_increment_away_shots();
 	scoreboard_increment_away_score();
 	assert(goalie(31)->shots_against == 0 && goalie(31)->goals_against == 0);
+	/* the goal counted as a shot for the team */
+	assert(scoreboard_get_away_shots() == 2);
 	scoreboard_decrement_away_score();
+	assert(scoreboard_get_away_shots() == 1);
 
 	scoreboard_set_goalie_in_net(31);
 	for (int i = 0; i < 10; i++)
 		scoreboard_increment_away_shots();
 	scoreboard_increment_away_score();
-	assert(goalie(31)->shots_against == 10);
+	/* the goal is a shot too, so 10 shots plus the goal */
+	assert(goalie(31)->shots_against == 11);
 	assert(goalie(31)->goals_against == 1);
-	assert(goalie(31)->season_shots_against == 10);
+	assert(goalie(31)->season_shots_against == 11);
 	assert(goalie(31)->season_goals_against == 1);
 
 	/* change goalies mid game: new numbers go to the new goalie */
@@ -165,15 +169,17 @@ static void test_shots_and_goals_go_to_the_goalie_in_net(void)
 	scoreboard_increment_away_shots();
 	scoreboard_increment_away_shots();
 	scoreboard_increment_away_score();
-	assert(goalie(31)->shots_against == 10 && goalie(31)->goals_against == 1);
-	assert(goalie(35)->shots_against == 2 && goalie(35)->goals_against == 1);
+	assert(goalie(31)->shots_against == 11 && goalie(31)->goals_against == 1);
+	assert(goalie(35)->shots_against == 3 && goalie(35)->goals_against == 1);
 
 	/* taking a goal back goes to the goalie who let it in */
 	scoreboard_decrement_away_score();
 	assert(goalie(35)->goals_against == 0);
+	assert(goalie(35)->shots_against == 2);
 	scoreboard_set_goalie_in_net(31);
 	scoreboard_decrement_away_score();
 	assert(goalie(31)->goals_against == 0);
+	assert(goalie(31)->shots_against == 10);
 
 	/* taking a shot back */
 	scoreboard_decrement_away_shots();
@@ -201,6 +207,7 @@ static void test_shots_and_goals_go_to_the_goalie_in_net(void)
 	/* goal charged to a goalie who was then removed */
 	scoreboard_increment_away_score();
 	assert(goalie(35)->goals_against == 1);
+	assert(goalie(35)->shots_against == 1);
 	scoreboard_goalie_remove(35);
 	scoreboard_decrement_away_score();
 	assert(scoreboard_goalie_count() == 1);
@@ -608,7 +615,7 @@ static void test_end_game_counts_games_and_writes_summary(void)
 
 	scoreboard_format_game_summary(buf, sizeof(buf));
 	assert(strstr(buf, "GAME SUMMARY\nKings 1 - 1 Rivals\n") == buf);
-	assert(strstr(buf, "Shots: Kings 1, Rivals 4") != NULL);
+	assert(strstr(buf, "Shots: Kings 2, Rivals 5") != NULL);
 	assert(strstr(buf, "Faceoffs won (Kings): 1/2 (50%)") != NULL);
 	assert(strstr(buf, "#10  1G 0A 1P  +/- 0  PIM 0") != NULL);
 	/* #12 did not play, so is not in this game's list */
@@ -618,7 +625,7 @@ static void test_end_game_counts_games_and_writes_summary(void)
 	assert(memcmp(players_at, "PLAYERS", 7) == 0);
 	for (char *c = players_at; c < goalies_at; c++)
 		assert(strncmp(c, "#12 ", 4) != 0);
-	assert(strstr(buf, "#31  SA   4  GA  1  SV% .750") != NULL);
+	assert(strstr(buf, "#31  SA   5  GA  1  SV% .800") != NULL);
 	assert(strstr(buf, "SEASON TO DATE") != NULL);
 	assert(strstr(buf, "#10  1GP 1G 0A 1P  1.00 PPG") != NULL);
 
@@ -711,11 +718,11 @@ static void test_reopen_after_new_game(void)
 	assert(scoreboard_reopen_last_game());
 	assert(scoreboard_get_home_score() == 3);
 	assert(scoreboard_get_away_score() == 1);
-	assert(scoreboard_get_home_shots() == 1);
-	assert(scoreboard_get_away_shots() == 4);
+	assert(scoreboard_get_home_shots() == 2);
+	assert(scoreboard_get_away_shots() == 5);
 	assert(scoreboard_get_home_faceoffs() == 1);
 	assert(scoreboard_get_away_faceoffs() == 1);
-	assert(goalie(31)->shots_against == 4);
+	assert(goalie(31)->shots_against == 5);
 	assert(scoreboard_get_goalie_in_net() == 31);
 	assert(player(10)->goals == 0 || player(10)->goals == 1);
 	/* the end was undone too, so games are back to zero */
@@ -761,10 +768,10 @@ static void test_new_files_are_written(void)
 	expect_file("home_pim.txt", "#10    4 game    4 season\n#12    2 game    2 season");
 	expect_file("home_ppg.txt", "#10   0.00\n#11   0.00\n#12   0.00");
 	expect_file("home_faceoff_percent.txt", "1/2 (50%)");
-	expect_file("home_goalie.txt", "#31  SA   4  GA  1  SV% .750");
-	expect_file("home_goalies.txt", "#31  SA   4  GA  1  SV% .750\n"
+	expect_file("home_goalie.txt", "#31  SA   5  GA  1  SV% .800");
+	expect_file("home_goalies.txt", "#31  SA   5  GA  1  SV% .800\n"
 					"#35  SA   0  GA  0  SV% -");
-	expect_file("home_goalies_season.txt", "#31  SA   4  GA  1  SV% .750\n"
+	expect_file("home_goalies_season.txt", "#31  SA   5  GA  1  SV% .800\n"
 					       "#35  SA   0  GA  0  SV% -");
 	cleanup_tmp_dir();
 }
@@ -785,8 +792,8 @@ static void test_save_and_load_keeps_everything(void)
 	scoreboard_reset_state_for_tests();
 	assert(scoreboard_load_state(path));
 	assert(scoreboard_goalie_count() == 2);
-	assert(goalie(31)->shots_against == 4 && goalie(31)->goals_against == 1);
-	assert(goalie(31)->season_shots_against == 4);
+	assert(goalie(31)->shots_against == 5 && goalie(31)->goals_against == 1);
+	assert(goalie(31)->season_shots_against == 5);
 	assert(goalie(31)->played);
 	assert(scoreboard_get_goalie_in_net() == 31);
 	assert(player(10)->games == 5 && player(10)->pim == 5);
