@@ -65,6 +65,7 @@ struct scoreboard_penalty {
 	bool active;
 	int phase2_tenths; /* 0 = no second phase (compound penalties) */
 	bool major;        /* 5 minutes or more: a goal against does not end it */
+	int pim_minutes;   /* penalty minutes this penalty added to the player */
 };
 
 /* Lifecycle */
@@ -190,6 +191,9 @@ int scoreboard_home_penalty_add(int player_number, int duration_secs);
 int scoreboard_home_penalty_add_compound(int player_number, int phase1_secs,
 					 int phase2_secs);
 void scoreboard_home_penalty_clear(int slot);
+/* Delete a home penalty by hand: like clear, but the penalty minutes it added
+ * to the player (game and season) are taken back, and the slots are packed. */
+void scoreboard_home_penalty_remove(int slot);
 void scoreboard_home_penalty_set_time(int slot, int duration_secs);
 const struct scoreboard_penalty *scoreboard_get_home_penalty(int slot);
 int scoreboard_get_home_penalty_count(void);
@@ -412,6 +416,8 @@ struct scoreboard_goalie {
 	int season_shots_against;
 	int season_goals_against;
 	int games;
+	int toi_tenths;        /* time on ice (in net) this game, tenths of a second */
+	int season_toi_tenths;
 	bool played; /* was in net this game */
 };
 
@@ -428,15 +434,21 @@ int scoreboard_get_goalie_in_net(void);
 bool scoreboard_goalie_set_shots_against(int number, int value);
 bool scoreboard_goalie_set_goals_against(int number, int value);
 bool scoreboard_goalie_set_season(int number, int sa, int ga, int games);
+/* Time on ice: counts up while the game clock runs and this goalie is in
+ * net. Manual corrections take seconds; a game change moves the season too. */
+bool scoreboard_goalie_set_toi_seconds(int number, int seconds);
+bool scoreboard_goalie_set_season_toi_seconds(int number, int seconds);
+/* "34:12" (minutes can go past 60 for a season). */
+void scoreboard_format_toi(int tenths, char *buf, size_t size);
 /* ".923", or "-" with no shots against. */
 void scoreboard_format_save_percentage(int shots_against, int goals_against,
 				       char *buf, size_t size);
-/* "#31   SA 25   GA 2   SV% .920" per goalie (season=true for season). */
+/* "#31  SA  25  GA  2  SV% .920  TOI 34:12" per goalie (season=true for season). */
 void scoreboard_format_goalie_lines(bool season, char *buf, size_t size);
 /* The goalie in net, same line format; empty with nobody in net. */
 void scoreboard_format_goalie_in_net(char *buf, size_t size);
 /* Compact form like the roster one, with the goalie in net at the end:
- * "number:sa:ga:season_sa:season_ga:games:played,...;in_net". */
+ * "number:sa:ga:season_sa:season_ga:games:played:toi:season_toi,...;in_net". */
 void scoreboard_goalies_to_string(char *buf, size_t size);
 void scoreboard_goalies_from_string(const char *text);
 

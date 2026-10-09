@@ -258,10 +258,10 @@ static void test_save_percentage_and_goalie_text(void)
 	scoreboard_goalie_set_goals_against(31, 2);
 	scoreboard_goalie_set_season(31, 100, 10, 4);
 	scoreboard_format_goalie_in_net(buf, sizeof(buf));
-	assert(strcmp(buf, "#31  SA  25  GA  2  SV% .920") == 0);
+	assert(strcmp(buf, "#31  SA  25  GA  2  SV% .920  TOI 0:00") == 0);
 	scoreboard_format_goalie_lines(false, buf, sizeof(buf));
-	assert(strcmp(buf, "#31  SA  25  GA  2  SV% .920\n"
-			   "#35  SA   0  GA  0  SV% -") == 0);
+	assert(strcmp(buf, "#31  SA  25  GA  2  SV% .920  TOI 0:00\n"
+			   "#35  SA   0  GA  0  SV% -  TOI 0:00") == 0);
 	scoreboard_format_goalie_lines(true, buf, sizeof(buf));
 	assert(strncmp(buf, "#31  SA 100  GA 10  SV% .900", 28) == 0);
 	char small[20];
@@ -282,7 +282,7 @@ static void test_goalie_string_round_trip(void)
 	scoreboard_goalie_set_goals_against(35, 1);
 	scoreboard_goalie_set_season(35, 50, 4, 3);
 	scoreboard_goalies_to_string(buf, sizeof(buf));
-	assert(strcmp(buf, "31:0:0:0:0:0:0,35:12:1:50:4:3:1;35") == 0);
+	assert(strcmp(buf, "31:0:0:0:0:0:0:0:0,35:12:1:50:4:3:1:0:0;35") == 0);
 
 	scoreboard_goalie_clear();
 	scoreboard_goalies_from_string(buf);
@@ -297,12 +297,12 @@ static void test_goalie_string_round_trip(void)
 	scoreboard_goalies_to_string(tiny, 0);
 	assert(tiny[0] == 'x');
 	/* too small for a second goalie or the tail */
-	char small[20];
+	char small[24];
 	scoreboard_goalies_to_string(small, sizeof(small));
-	assert(strcmp(small, "31:0:0:0:0:0:0;35") == 0);
-	char exact[16];
+	assert(strcmp(small, "31:0:0:0:0:0:0:0:0;35") == 0);
+	char exact[20];
 	scoreboard_goalies_to_string(exact, sizeof(exact));
-	assert(strcmp(exact, "31:0:0:0:0:0:0") == 0);
+	assert(strcmp(exact, "31:0:0:0:0:0:0:0:0") == 0);
 
 	/* nobody in net, older or odd text */
 	scoreboard_goalies_from_string("31:5:1;-1");
@@ -768,11 +768,12 @@ static void test_new_files_are_written(void)
 	expect_file("home_pim.txt", "#10    4 game    4 season\n#12    2 game    2 season");
 	expect_file("home_ppg.txt", "#10   0.00\n#11   0.00\n#12   0.00");
 	expect_file("home_faceoff_percent.txt", "1/2 (50%)");
-	expect_file("home_goalie.txt", "#31  SA   5  GA  1  SV% .800");
-	expect_file("home_goalies.txt", "#31  SA   5  GA  1  SV% .800\n"
-					"#35  SA   0  GA  0  SV% -");
-	expect_file("home_goalies_season.txt", "#31  SA   5  GA  1  SV% .800\n"
-					       "#35  SA   0  GA  0  SV% -");
+	expect_file("home_goalie.txt", "#31  SA   5  GA  1  SV% .800  TOI 0:00");
+	expect_file("home_goalies.txt", "#31  SA   5  GA  1  SV% .800  TOI 0:00\n"
+					"#35  SA   0  GA  0  SV% -  TOI 0:00");
+	expect_file("home_goalies_season.txt",
+		    "#31  SA   5  GA  1  SV% .800  TOI 0:00\n"
+		    "#35  SA   0  GA  0  SV% -  TOI 0:00");
 	cleanup_tmp_dir();
 }
 
@@ -819,6 +820,163 @@ static void test_save_and_load_keeps_everything(void)
 	cleanup_tmp_dir();
 }
 
+/* ---- goalie time on ice ---- */
+
+static void test_goalie_time_on_ice(void)
+{
+	char buf[64];
+	char tiny[1] = {'x'};
+	setup();
+	scoreboard_clock_set_tenths(9000);
+	scoreboard_clock_start();
+
+	/* nobody in net: nobody gets time */
+	scoreboard_clock_tick(100);
+	assert(goalie(31)->toi_tenths == 0);
+
+	scoreboard_set_goalie_in_net(31);
+	scoreboard_clock_tick(100);
+	scoreboard_clock_tick(250);
+	assert(goalie(31)->toi_tenths == 350);
+	assert(goalie(31)->season_toi_tenths == 350);
+
+	/* a goalie swap splits the time */
+	scoreboard_set_goalie_in_net(35);
+	scoreboard_clock_tick(50);
+	assert(goalie(35)->toi_tenths == 50 && goalie(31)->toi_tenths == 350);
+
+	/* only the time left on the clock counts when it runs out */
+	scoreboard_clock_set_tenths(30);
+	scoreboard_clock_tick(100);
+	assert(goalie(35)->toi_tenths == 80);
+	assert(!scoreboard_clock_is_running());
+	scoreboard_clock_tick(100); /* stopped clock: nothing */
+	assert(goalie(35)->toi_tenths == 80);
+
+	/* counting up works too */
+	scoreboard_set_clock_direction(SCOREBOARD_CLOCK_COUNT_UP);
+	scoreboard_clock_set_tenths(0);
+	scoreboard_clock_start();
+	scoreboard_clock_tick(20);
+	assert(goalie(35)->toi_tenths == 100);
+
+	scoreboard_format_toi(0, buf, sizeof(buf));
+	assert(strcmp(buf, "0:00") == 0);
+	scoreboard_format_toi(20520, buf, sizeof(buf));
+	assert(strcmp(buf, "34:12") == 0);
+	scoreboard_format_toi(37250, buf, sizeof(buf));
+	assert(strcmp(buf, "62:05") == 0);
+	scoreboard_format_toi(-5, buf, sizeof(buf));
+	assert(strcmp(buf, "0:00") == 0);
+	scoreboard_format_toi(100, tiny, 0);
+	assert(tiny[0] == 'x');
+
+	/* manual corrections move the season with them */
+	assert(!scoreboard_goalie_set_toi_seconds(99, 5));
+	assert(!scoreboard_goalie_set_season_toi_seconds(99, 5));
+	assert(scoreboard_goalie_set_toi_seconds(31, 600));
+	assert(goalie(31)->toi_tenths == 6000);
+	assert(goalie(31)->season_toi_tenths == 6000 - 350 + 350);
+	assert(scoreboard_goalie_set_season_toi_seconds(31, 7200));
+	assert(goalie(31)->season_toi_tenths == 72000);
+	scoreboard_goalie_set_toi_seconds(31, -4);
+	assert(goalie(31)->toi_tenths == 0);
+	scoreboard_goalie_set_season_toi_seconds(31, -4);
+	assert(goalie(31)->season_toi_tenths == 0);
+
+	/* shown in the goalie lines, saved, reset with the stats */
+	scoreboard_goalie_set_toi_seconds(31, 2052);
+	scoreboard_set_goalie_in_net(31);
+	scoreboard_format_goalie_in_net(buf, sizeof(buf));
+	assert(strstr(buf, "TOI 34:12") != NULL);
+	char text[256];
+	scoreboard_goalies_to_string(text, sizeof(text));
+	scoreboard_goalie_clear();
+	scoreboard_goalies_from_string(text);
+	assert(goalie(31)->toi_tenths == 20520);
+	assert(goalie(31)->season_toi_tenths == 20520);
+	scoreboard_goalies_from_string("31:0:0:0:0:0:0:-5:-5");
+	assert(goalie(31)->toi_tenths == 0);
+	scoreboard_goalie_set_toi_seconds(31, 50);
+	scoreboard_roster_reset_game_stats();
+	assert(goalie(31)->toi_tenths == 0);
+	scoreboard_goalie_set_season_toi_seconds(31, 100);
+	scoreboard_roster_reset_season_stats();
+	assert(goalie(31)->season_toi_tenths == 0);
+}
+
+/* ---- deleting a penalty by hand ---- */
+
+static void test_deleting_a_penalty_takes_its_minutes_back(void)
+{
+	setup();
+	scoreboard_home_penalty_add(10, 120);
+	scoreboard_home_penalty_add(11, 300);
+	assert(player(10)->pim == 2 && player(11)->pim == 5);
+	scoreboard_player_set_season_pim(10, 20);
+
+	scoreboard_home_penalty_remove(-1);
+	scoreboard_home_penalty_remove(SCOREBOARD_MAX_PENALTIES);
+	scoreboard_home_penalty_remove(1 + 1); /* empty slot */
+	assert(player(10)->pim == 2 && player(11)->pim == 5);
+
+	scoreboard_home_penalty_remove(0);
+	assert(player(10)->pim == 0 && player(10)->season_pim == 18);
+	/* the other penalty moved up to the first slot */
+	assert(scoreboard_get_home_penalty(0)->active);
+	assert(scoreboard_get_home_penalty(0)->player_number == 11);
+	assert(!scoreboard_get_home_penalty(1)->active);
+
+	/* a compound penalty gives back both parts */
+	scoreboard_home_penalty_add_compound(12, 120, 120);
+	assert(player(12)->pim == 4);
+	scoreboard_home_penalty_remove(1);
+	assert(player(12)->pim == 0 && player(12)->season_pim == 0);
+
+	/* no number, or a player no longer on the roster */
+	scoreboard_home_penalty_add(0, 120);
+	scoreboard_home_penalty_remove(1);
+	scoreboard_home_penalty_add(11, 120);
+	scoreboard_roster_remove(11);
+	scoreboard_home_penalty_remove(1);
+	assert(!scoreboard_get_home_penalty(1)->active);
+
+	/* a penalty the minutes were already edited down for */
+	scoreboard_home_penalty_clear(0);
+	scoreboard_home_penalty_add(10, 240);
+	scoreboard_player_set_pim(10, 1);
+	scoreboard_home_penalty_remove(0);
+	assert(player(10)->pim == 0 && player(10)->season_pim >= 0);
+
+	/* a penalty that ran out on its own keeps its minutes */
+	scoreboard_home_penalty_add(10, 120);
+	scoreboard_penalty_tick(1200);
+	assert(!scoreboard_get_home_penalty(0)->active);
+	assert(player(10)->pim == 2);
+}
+
+static void test_deleting_a_penalty_after_reading_files_or_loading(void)
+{
+	char path[512];
+	setup_tmp_dir();
+	setup();
+	scoreboard_set_output_directory(g_tmp_dir);
+	scoreboard_home_penalty_add(10, 240);
+	assert(scoreboard_write_all_files());
+	assert(scoreboard_read_all_files());
+	assert(player(10)->pim == 4);
+	assert(scoreboard_get_home_penalty(0)->pim_minutes == 4);
+
+	snprintf(path, sizeof(path), "%s/state.json", g_tmp_dir);
+	assert(scoreboard_save_state(path));
+	scoreboard_home_penalty_clear(0);
+	assert(scoreboard_load_state(path));
+	assert(scoreboard_get_home_penalty(0)->pim_minutes == 4);
+	scoreboard_home_penalty_remove(0);
+	assert(player(10)->pim == 0);
+	cleanup_tmp_dir();
+}
+
 int main(void)
 {
 	test_goalie_roster();
@@ -841,6 +999,9 @@ int main(void)
 	test_new_game_without_ending_keeps_season_and_games();
 	test_new_files_are_written();
 	test_save_and_load_keeps_everything();
+	test_goalie_time_on_ice();
+	test_deleting_a_penalty_takes_its_minutes_back();
+	test_deleting_a_penalty_after_reading_files_or_loading();
 	printf("scoreboard-core goalie tests passed\n");
 	return 0;
 }

@@ -34,6 +34,7 @@
 #else
 #include <QtWidgets/QAction>
 #endif
+#include <QtWidgets/QButtonGroup>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDialog>
@@ -1216,6 +1217,7 @@ void edit_goalie_stats(QWidget *parent, int number)
 	const int old_season_sa = g->season_shots_against;
 	const int old_season_ga = g->season_goals_against;
 	const int old_games = g->games;
+	const int old_season_toi = g->season_toi_tenths / 10;
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(QString("Edit goalie #%1").arg(number));
@@ -1236,15 +1238,23 @@ void edit_goalie_stats(QWidget *parent, int number)
 	grid->addWidget(season_ga, 2, 2);
 	grid->addWidget(new QLabel("Games played:", &dialog), 3, 0);
 	grid->addWidget(games, 3, 2);
+	/* Time on ice as minutes (the seconds are kept when it is not changed). */
+	const int game_toi_secs = g->toi_tenths / 10;
+	QSpinBox *game_toi = make_stat_spin(&dialog, 0, 999, game_toi_secs / 60);
+	QSpinBox *season_toi =
+		make_stat_spin(&dialog, 0, 99999, old_season_toi / 60);
+	grid->addWidget(new QLabel("Time on ice (minutes):", &dialog), 4, 0);
+	grid->addWidget(game_toi, 4, 1);
+	grid->addWidget(season_toi, 4, 2);
 	QLabel *note = new QLabel(
-		"Save % is worked out from SA and GA. Changing a game number also moves the season number by the same amount.",
+		"Save % is worked out from SA and GA. Time on ice counts up by itself while the clock runs and this goalie is in net. Changing a game number also moves the season number by the same amount.",
 		&dialog);
 	note->setWordWrap(true);
 	note->setStyleSheet("font-size: 10px; color: gray;");
-	grid->addWidget(note, 4, 0, 1, 3);
+	grid->addWidget(note, 5, 0, 1, 3);
 	QDialogButtonBox *buttons = new QDialogButtonBox(
 		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-	grid->addWidget(buttons, 5, 0, 1, 3);
+	grid->addWidget(buttons, 6, 0, 1, 3);
 	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
 			 &QDialog::accept);
 	QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
@@ -1254,6 +1264,9 @@ void edit_goalie_stats(QWidget *parent, int number)
 
 	scoreboard_goalie_set_shots_against(number, game_sa->value());
 	scoreboard_goalie_set_goals_against(number, game_ga->value());
+	if (game_toi->value() != game_toi_secs / 60)
+		scoreboard_goalie_set_toi_seconds(number,
+						  game_toi->value() * 60);
 	g = find_goalie(number);
 	if (g == nullptr)
 		return;
@@ -1264,6 +1277,9 @@ void edit_goalie_stats(QWidget *parent, int number)
 				   ? season_ga->value()
 				   : g->season_goals_against;
 	scoreboard_goalie_set_season(number, new_sa, new_ga, games->value());
+	if (season_toi->value() != old_season_toi / 60)
+		scoreboard_goalie_set_season_toi_seconds(
+			number, season_toi->value() * 60);
 }
 
 void add_goalies_from_text(QString text)
@@ -1285,11 +1301,19 @@ QString goalie_row_text(const struct scoreboard_goalie *g, bool season)
 	const int sa = season ? g->season_shots_against : g->shots_against;
 	const int ga = season ? g->season_goals_against : g->goals_against;
 	char sv[16];
+	char toi[24];
 	scoreboard_format_save_percentage(sa, ga, sv, sizeof(sv));
+	scoreboard_format_toi(season ? g->season_toi_tenths : g->toi_tenths,
+			      toi, sizeof(toi));
 	const bool in_net = scoreboard_get_goalie_in_net() == g->number;
-	return QString::asprintf("%s#%-3d SA %3d  GA %2d  SV%% %s",
+	if (season)
+		return QString::asprintf(
+			"%s#%-3d %3dGP SA %4d  GA %3d  SV%% %s  TOI %s",
+			in_net ? "NET " : "    ", g->number, g->games, sa, ga,
+			sv, toi);
+	return QString::asprintf("%s#%-3d SA %3d  GA %2d  SV%% %s  TOI %s",
 				 in_net ? "NET " : "    ", g->number, sa, ga,
-				 sv);
+				 sv, toi);
 }
 
 void show_goalie_menu(QWidget *button, int number, const QPoint &pos)
@@ -1620,9 +1644,10 @@ QString player_row_text(const struct scoreboard_player *p, bool season)
 		return QString::asprintf("#%-3d %4s  %2dG %2dA %2dP %3dPIM",
 					 p->number, pm, goals, assists,
 					 goals + assists, pim);
-	return QString::asprintf("#%-3d %4s  %2dG %2dA %2dP %5.2fPPG %3dPIM",
-				 p->number, pm, goals, assists, goals + assists,
-				 scoreboard_player_get_ppg(p->number), pim);
+	return QString::asprintf(
+		"#%-3d %3dGP %4s  %2dG %2dA %2dP %5.2fPPG %3dPIM", p->number,
+		p->games, pm, goals, assists, goals + assists,
+		scoreboard_player_get_ppg(p->number), pim);
 }
 
 void update_onice_team(onice_widgets &w)
@@ -2038,7 +2063,7 @@ void update_all_labels()
 							captured_home,
 							p->player_number);
 						if (captured_home)
-							scoreboard_home_penalty_clear(
+							scoreboard_home_penalty_remove(
 								captured_slot);
 						else
 							scoreboard_away_penalty_clear(
@@ -2297,12 +2322,37 @@ void open_add_penalty_dialog(QWidget *parent, bool home,
 	dialog.activateWindow();
 	QVBoxLayout *layout = new QVBoxLayout(&dialog);
 
-	QHBoxLayout *num_row = new QHBoxLayout();
-	num_row->addWidget(new QLabel("Player #:", &dialog));
-	QLineEdit *num_input = new QLineEdit(&dialog);
-	num_input->setPlaceholderText("required");
-	num_row->addWidget(num_input);
-	layout->addLayout(num_row);
+	/* Home penalties on a hockey roster pick the player with tick boxes
+	   (one at a time). Away penalties, or an empty roster, type a number. */
+	const bool use_roster_boxes =
+		home && is_hockey_now() && scoreboard_roster_count() > 0;
+	QLineEdit *num_input = nullptr;
+	QVector<QCheckBox *> player_boxes;
+	QButtonGroup *player_group = nullptr;
+	if (use_roster_boxes) {
+		layout->addWidget(new QLabel("Which player?", &dialog));
+		QGridLayout *player_grid = new QGridLayout();
+		player_group = new QButtonGroup(&dialog);
+		player_group->setExclusive(true);
+		const int roster_count = scoreboard_roster_count();
+		for (int i = 0; i < roster_count; i++) {
+			const int number = scoreboard_roster_get(i)->number;
+			QCheckBox *box =
+				new QCheckBox(QString("#%1").arg(number), &dialog);
+			box->setProperty("number", number);
+			player_group->addButton(box);
+			player_grid->addWidget(box, i / 4, i % 4);
+			player_boxes.push_back(box);
+		}
+		layout->addLayout(player_grid);
+	} else {
+		QHBoxLayout *num_row = new QHBoxLayout();
+		num_row->addWidget(new QLabel("Player #:", &dialog));
+		num_input = new QLineEdit(&dialog);
+		num_input->setPlaceholderText("required");
+		num_row->addWidget(num_input);
+		layout->addLayout(num_row);
+	}
 
 	QHBoxLayout *dur_row = new QHBoxLayout();
 	dur_row->addWidget(new QLabel("Duration (sec):", &dialog));
@@ -2377,13 +2427,22 @@ void open_add_penalty_dialog(QWidget *parent, bool home,
 			 &QDialog::reject);
 	layout->addWidget(buttons);
 
-	num_input->setFocus();
+	if (num_input)
+		num_input->setFocus();
 
 	if (dialog.exec() == QDialog::Accepted) {
-		bool ok = false;
-		int player_num = num_input->text().trimmed().toInt(&ok);
-		if (!ok)
-			player_num = 0;
+		int player_num = 0;
+		if (use_roster_boxes) {
+			for (QCheckBox *box : player_boxes) {
+				if (box->isChecked())
+					player_num = box->property("number").toInt();
+			}
+		} else {
+			bool ok = false;
+			player_num = num_input->text().trimmed().toInt(&ok);
+			if (!ok)
+				player_num = 0;
+		}
 
 		/* Determine phase 2 from toggle state */
 		int selected_phase2 = 0;
@@ -3203,7 +3262,7 @@ void hk_home_pen_clear1(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 		scoreboard_home_penalty_set_time(0, 0);
 	} else {
 		remove_penalty_event(true, p->player_number);
-		scoreboard_home_penalty_clear(0);
+		scoreboard_home_penalty_remove(0);
 		scoreboard_penalty_compact();
 	}
 }
@@ -3219,7 +3278,7 @@ void hk_home_pen_clear2(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 		scoreboard_home_penalty_set_time(1, 0);
 	} else {
 		remove_penalty_event(true, p->player_number);
-		scoreboard_home_penalty_clear(1);
+		scoreboard_home_penalty_remove(1);
 		scoreboard_penalty_compact();
 	}
 }

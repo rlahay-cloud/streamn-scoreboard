@@ -18,6 +18,10 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 - **Points per game** in `home_ppg.txt`, counted over games finished with End Game.
 - **End Game** button: pick who played, then a summary of all the important numbers is written to `game_summary.txt` (plus a dated copy).
 - **Reopen Last Game** button to fix mistakes after End Game or after New Game.
+- Goalie **time on ice (TOI)**, counted while the game clock runs and the goalie is in net, for the game and the season.
+- The Season view shows **games played (GP)** for skaters and goalies.
+- Adding a home penalty picks the player from tick boxes of your roster.
+- Deleting a penalty by hand takes its penalty minutes back off the player.
 - The goal window now allows at most 5 players on the ice.
 - An away goal while the home team is short-handed ends the first home minor penalty (2 minutes removed, 4 minutes drops to 2, 2+2 moves on). Majors are not ended. Can be turned off.
 
