@@ -996,6 +996,23 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 	}
 	layout->addLayout(ice_grid);
 
+	/* A scorer or assist was on the ice, so picking one ticks their box. */
+	auto tick_on_ice = [ice_boxes](QComboBox *combo) {
+		const int number = combo->currentData().toInt();
+		for (QCheckBox *box : ice_boxes) {
+			if (number >= 0 && box->property("number").toInt() == number)
+				box->setChecked(true);
+		}
+	};
+	if (home) {
+		for (QComboBox *combo : {scorer, assist1, assist2}) {
+			QObject::connect(
+				combo,
+				QOverload<int>::of(&QComboBox::currentIndexChanged),
+				[tick_on_ice, combo](int) { tick_on_ice(combo); });
+		}
+	}
+
 	QDialogButtonBox *buttons = new QDialogButtonBox(
 		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
 	buttons->button(QDialogButtonBox::Cancel)->setText("Skip");
@@ -1019,6 +1036,11 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 					"Pick each player only once.");
 				continue;
 			}
+		}
+		if (home) {
+			tick_on_ice(scorer);
+			tick_on_ice(assist1);
+			tick_on_ice(assist2);
 		}
 		std::vector<int> on_ice;
 		for (QCheckBox *box : ice_boxes) {

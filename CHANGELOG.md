@@ -6,7 +6,7 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 
 ### Added
 - Home player stats for hockey, kept in their own **Home Players** window opened from one **Player Stats / Roster...** button in the dock. The window shows the whole roster, two players per row, and stays open while you work. Only the home team is tracked.
-- After every goal, home or away, a window asks which players were on the ice and plus/minus is updated: +1 for a home goal, -1 for an away goal. Every box starts empty for each goal, and Skip changes nothing. For a home goal the window also asks who scored and who assisted. Roster menu items reopen the window for the last home or away goal to fix it later.
+- After every goal, home or away, a window asks which players were on the ice and plus/minus is updated: +1 for a home goal, -1 for an away goal. Every box starts empty for each goal, and Skip changes nothing. For a home goal the window also asks who scored and who assisted, and ticks those players as on the ice for you. Roster menu items reopen the window for the last home or away goal to fix it later.
 - No plus/minus is given for goals scored while any penalty is active on either team. This can be turned off from the Roster menu.
 - Game and season totals for plus/minus, goals, assists and points, with a Game / Season switch. New Game clears the game numbers and keeps the season numbers.
 - Click a player to type in exact game and season numbers.

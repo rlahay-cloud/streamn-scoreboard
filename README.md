@@ -159,7 +159,7 @@ For hockey, the dock has one button, **Player Stats / Roster...**. It opens a se
 
 1. In the Home Players window, click **Roster...** and choose **Add players...**. Type the jersey numbers separated by spaces or commas (for example `4 7 12, 19`). You can add up to 30 players.
 2. Score as usual. After each goal, home or away, a small window asks **who was on the ice**. Tick the players. Every box starts empty for each new goal, nothing is remembered from the last one. Press **OK** to save, or **Skip** to leave everything alone (nobody gets any +/- for that goal).
-3. For a home goal the same window also asks who scored and who got up to two assists.
+3. For a home goal the same window also asks who scored and who got up to two assists. Anyone you pick as the scorer or an assist is ticked as on the ice automatically.
 
 Each row in the Home Players window reads like `#12    +2   1G  2A  3P` (jersey number, +/-, goals, assists, points). The **Game / Season** switch at the top changes whether the rows show this game or the whole season. Click a row to edit that player.
 
