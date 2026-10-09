@@ -13,7 +13,7 @@ OBS Studio plugin that tracks live game scoreboard state and writes it to indivi
 ## Features
 
 - **7 sport presets** — hockey, basketball, soccer, football, lacrosse, rugby, and generic
-- **32 text files** updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals and assists (game and season), on-ice players, sport, and more
+- **32 text files** updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals and assists (game and season), sport, and more
 - **Dock UI** with full scoreboard controls in an OBS dock panel
 - **45 OBS hotkeys** for hands-free operation during broadcasts
 - **Penalty tracking** with automatic countdown timers, compound penalties (2+2, 2+5, 2+10), edit/clear per slot (hockey, lacrosse, rugby)

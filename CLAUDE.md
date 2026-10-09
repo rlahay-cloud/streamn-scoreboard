@@ -86,7 +86,7 @@ Tests are plain C using `assert()` — no external test framework. Seven test bi
 - `test-scoreboard-core-persistence.c` — file output, JSON save/load, action logs, CLI settings, game clock persistence, penalty label file output
 - `test-scoreboard-core-sport.c` — sport presets, fouls, score labels
 - `test-scoreboard-core-events.c` — event log add/remove/find/write lifecycle
-- `test-scoreboard-core-plusminus.c` — roster, on-ice flags, goal crediting and reversal, power-play skipping, file output, persistence, roster text form
+- `test-scoreboard-core-plusminus.c` — roster, goal on-ice answers, goal crediting and reversal, penalty skipping, file output, persistence, roster text form
 
 Each test calls `scoreboard_reset_state_for_tests()` for isolation. Tests run via `ctest --preset default` or `make test`.
 
