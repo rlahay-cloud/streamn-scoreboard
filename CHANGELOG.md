@@ -29,6 +29,9 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 - **Reopen Last Game now survives closing OBS.**
 - Goalie time on ice now follows manual clock changes (set the clock, add or subtract seconds or minutes).
 - End Game is now a simple confirmation using today's lineup instead of a list of tick boxes.
+- **Names:** give every player and goalie a name (Roster menu, "Player and goalie names...", or the edit window). Names show in the Home Players window, the goal window and the penalty window.
+- **One text file per player and goalie:** `player_10.txt`, `goalie_31.txt` and so on, with the name, a Game line and a Season line, updated as the game goes. Handy for a pop-up player card in OBS.
+- **Goalie GAA** (goals against average, goals per 60 minutes in net) in the goalie lines, the goalie files, the Home Players window and the game summary files.
 - An away goal while the home team is short-handed ends the first home minor penalty (2 minutes removed, 4 minutes drops to 2, 2+2 moves on). Majors are not ended. Can be turned off.
 
 ## [0.8.0] - 2026-04-17
