@@ -287,6 +287,7 @@ void scoreboard_preview_strength_label(const char *fmt, char *buf,
 #define SCOREBOARD_MAX_ON_ICE 5
 #define SCOREBOARD_MAX_GOALIES 4
 
+#define SCOREBOARD_NAME_LEN 32
 struct scoreboard_player {
 	int number;
 	int plus_minus;
@@ -299,6 +300,7 @@ struct scoreboard_player {
 	int season_pim;
 	int games;      /* games finished with End Game that this player was in */
 	bool out;       /* not in today's lineup (see scoreboard_player_set_dressed) */
+	char name[SCOREBOARD_NAME_LEN]; /* optional, "" when not given */
 };
 
 /* Returns the roster slot, or -1 if the number is out of range or the roster
@@ -465,7 +467,25 @@ struct scoreboard_goalie {
 	int toi_tenths;        /* time on ice (in net) this game, tenths of a second */
 	int season_toi_tenths;
 	bool played; /* was in net this game */
+	char name[SCOREBOARD_NAME_LEN]; /* optional, "" when not given */
 };
+
+/* ---- names and one stat file per player ---- */
+
+/* Names are optional (up to 31 bytes). Characters the saved text forms use
+ * as separators are turned into spaces. Returns false for a number that is
+ * not on the roster (or goalie list). The getters return "" when there is no
+ * name. Each player and goalie also gets their own text file, player_<n>.txt
+ * and goalie_<n>.txt, with a name line, a Game line and a Season line. */
+bool scoreboard_player_set_name(int number, const char *name);
+const char *scoreboard_player_get_name(int number);
+bool scoreboard_goalie_set_name(int number, const char *name);
+const char *scoreboard_goalie_get_name(int number);
+bool scoreboard_format_player_file(int number, char *buf, size_t size);
+bool scoreboard_format_goalie_file(int number, char *buf, size_t size);
+/* Goals against average: goals per 60 minutes in net; "-" before any time. */
+void scoreboard_format_gaa(int goals_against, int toi_tenths, char *buf,
+			   size_t size);
 
 int scoreboard_goalie_add(int number);
 bool scoreboard_goalie_remove(int number);

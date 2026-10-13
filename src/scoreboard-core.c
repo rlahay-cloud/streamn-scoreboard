@@ -541,6 +541,50 @@ static struct scoreboard_player *roster_lookup(int number)
 	return idx >= 0 ? &g_state.home_roster[idx] : NULL;
 }
 
+/* Copy a name, replacing characters that the saved text forms use as
+   separators (and control characters) with spaces, trimming the ends and
+   cutting it to fit without splitting a multi-byte character. */
+static void name_copy(char *dest, const char *src, size_t n)
+{
+	char tmp[SCOREBOARD_NAME_LEN];
+	size_t len = 0;
+	bool cut = false;
+	for (size_t i = 0; i < n && src[i] != '\0'; i++) {
+		unsigned char c = (unsigned char)src[i];
+		const bool bad = c < 32 || c == 127 || c == ':' || c == ',' ||
+				 c == ';' || c == '|' || c == '=' || c == '"' ||
+				 c == '\\';
+		if (len + 1 >= sizeof(tmp)) {
+			cut = true;
+			break;
+		}
+		tmp[len++] = bad ? ' ' : (char)c;
+	}
+	if (cut) {
+		/* Do not end in the middle of a multi-byte character. */
+		size_t j = len;
+		while (j > 0 && ((unsigned char)tmp[j - 1] & 0xC0) == 0x80)
+			j--;
+		if (j > 0) {
+			const unsigned char lead = (unsigned char)tmp[j - 1];
+			const size_t need = lead >= 0xF0   ? 4
+					    : lead >= 0xE0 ? 3
+					    : lead >= 0xC0 ? 2
+							   : 1;
+			if (j - 1 + need > len)
+				len = j - 1;
+		}
+	}
+	tmp[len] = '\0';
+	size_t start = 0;
+	while (tmp[start] == ' ')
+		start++;
+	while (len > start && tmp[len - 1] == ' ')
+		len--;
+	memcpy(dest, tmp + start, len - start);
+	dest[len - start] = '\0';
+}
+
 int scoreboard_roster_add(int number)
 {
 	if (number < 0 || number > SCOREBOARD_MAX_PLAYER_NUMBER)
@@ -622,6 +666,99 @@ static struct scoreboard_goalie *goalie_lookup(int number)
 {
 	int idx = goalie_index(number);
 	return idx >= 0 ? &g_state.goalies[idx] : NULL;
+}
+
+/* ---- names and one stat file per player ---- */
+
+bool scoreboard_player_set_name(int number, const char *name)
+{
+	struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	name_copy(p->name, name != NULL ? name : "",
+		  name != NULL ? strlen(name) : 0);
+	mark_dirty();
+	return true;
+}
+
+const char *scoreboard_player_get_name(int number)
+{
+	const struct scoreboard_player *p = roster_lookup(number);
+	return p != NULL ? p->name : "";
+}
+
+bool scoreboard_goalie_set_name(int number, const char *name)
+{
+	struct scoreboard_goalie *g = goalie_lookup(number);
+	if (g == NULL)
+		return false;
+	name_copy(g->name, name != NULL ? name : "",
+		  name != NULL ? strlen(name) : 0);
+	mark_dirty();
+	return true;
+}
+
+const char *scoreboard_goalie_get_name(int number)
+{
+	const struct scoreboard_goalie *g = goalie_lookup(number);
+	return g != NULL ? g->name : "";
+}
+
+bool scoreboard_format_player_file(int number, char *buf, size_t size)
+{
+	if (size == 0)
+		return false;
+	buf[0] = '\0';
+	const struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	char pm[16];
+	char season_pm[16];
+	scoreboard_format_plus_minus(p->plus_minus, pm, sizeof(pm));
+	scoreboard_format_plus_minus(p->season_plus_minus, season_pm,
+				     sizeof(season_pm));
+	snprintf(buf, size,
+		 "#%d%s%s\n"
+		 "Game: %s +/- | %dG %dA %dP | %d PIM\n"
+		 "Season: %d GP | %s +/- | %dG %dA %dP | %.2f PPG | %d PIM\n",
+		 p->number, p->name[0] != '\0' ? " " : "", p->name, pm,
+		 p->goals, p->assists, p->goals + p->assists, p->pim, p->games,
+		 season_pm, p->season_goals, p->season_assists,
+		 p->season_goals + p->season_assists,
+		 scoreboard_player_get_ppg(p->number), p->season_pim);
+	return true;
+}
+
+bool scoreboard_format_goalie_file(int number, char *buf, size_t size)
+{
+	if (size == 0)
+		return false;
+	buf[0] = '\0';
+	const struct scoreboard_goalie *g = goalie_lookup(number);
+	if (g == NULL)
+		return false;
+	char sv[16], gaa[16], toi[24];
+	char ssv[16], sgaa[16], stoi[24];
+	scoreboard_format_save_percentage(g->shots_against, g->goals_against,
+					  sv, sizeof(sv));
+	scoreboard_format_gaa(g->goals_against, g->toi_tenths, gaa,
+			      sizeof(gaa));
+	scoreboard_format_toi(g->toi_tenths, toi, sizeof(toi));
+	scoreboard_format_save_percentage(g->season_shots_against,
+					  g->season_goals_against, ssv,
+					  sizeof(ssv));
+	scoreboard_format_gaa(g->season_goals_against, g->season_toi_tenths,
+			      sgaa, sizeof(sgaa));
+	scoreboard_format_toi(g->season_toi_tenths, stoi, sizeof(stoi));
+	snprintf(buf, size,
+		 "#%d%s%s\n"
+		 "Game: SA %d | GA %d | SV%% %s | GAA %s | TOI %s\n"
+		 "Season: %d GP | SA %d | GA %d | SV%% %s | GAA %s | TOI %s\n",
+		 g->number, g->name[0] != '\0' ? " " : "", g->name,
+		 g->shots_against, g->goals_against, sv, gaa, toi, g->games,
+		 g->season_shots_against, g->season_goals_against, ssv, sgaa,
+		 stoi);
+	return true;
 }
 
 int scoreboard_goalie_add(int number)
@@ -1322,7 +1459,7 @@ static void roster_array_to_string(const struct scoreboard_player *roster,
 	size_t len = 0;
 	for (int i = 0; i < count; i++) {
 		const struct scoreboard_player *p = &roster[i];
-		char item[128];
+		char item[160];
 		/* The second slot used to hold an on-ice flag. It is always 0
 		   now but kept so older and newer saves read the same way. */
 		snprintf(item, sizeof(item),
@@ -1331,6 +1468,9 @@ static void roster_array_to_string(const struct scoreboard_player *roster,
 			 p->season_plus_minus, p->season_goals,
 			 p->season_assists, p->pim, p->season_pim, p->games,
 			 p->out ? 1 : 0);
+		if (p->name[0] != '\0')
+			snprintf(item + strlen(item), sizeof(item) - strlen(item),
+				 "=%s", p->name);
 		size_t item_len = strlen(item);
 		size_t need = item_len + (len > 0 ? 1 : 0);
 		if (len + need >= size)
@@ -1370,9 +1510,11 @@ void scoreboard_roster_from_string(const char *text)
 			fields[read] = strtol(p + 1, &end, 10);
 			p = end;
 		}
+		const char *name_start = (readable && *p == '=') ? p + 1 : NULL;
 		/* Skip anything left over up to the next entry. */
 		while (*p != '\0' && *p != ',')
 			p++;
+		const char *name_end = p;
 		if (*p == ',')
 			p++;
 		if (readable && number >= 0 &&
@@ -1406,6 +1548,9 @@ void scoreboard_roster_from_string(const char *text)
 					player->games = clamp_zero((int)fields[9]);
 				}
 				player->out = (read >= 11 && fields[10] != 0);
+				if (name_start != NULL)
+					name_copy(player->name, name_start,
+						  (size_t)(name_end - name_start));
 			}
 		}
 	}
@@ -1728,6 +1873,19 @@ void scoreboard_format_save_percentage(int shots_against, int goals_against,
 		snprintf(buf, size, ".%03d", permille);
 }
 
+void scoreboard_format_gaa(int goals_against, int toi_tenths, char *buf,
+			   size_t size)
+{
+	if (size == 0)
+		return;
+	if (toi_tenths <= 0) {
+		snprintf(buf, size, "-");
+		return;
+	}
+	/* 60 minutes = 36000 tenths of a second */
+	snprintf(buf, size, "%.2f", (double)goals_against * 36000.0 / toi_tenths);
+}
+
 static void goalie_line(const struct scoreboard_goalie *g, bool season,
 			char *buf, size_t size)
 {
@@ -1736,10 +1894,12 @@ static void goalie_line(const struct scoreboard_goalie *g, bool season,
 	char sv[16];
 	scoreboard_format_save_percentage(sa, ga, sv, sizeof(sv));
 	char toi[24];
-	scoreboard_format_toi(season ? g->season_toi_tenths : g->toi_tenths,
-			      toi, sizeof(toi));
-	snprintf(buf, size, "#%-3d SA %3d  GA %2d  SV%% %s  TOI %s", g->number,
-		 sa, ga, sv, toi);
+	const int toi_tenths = season ? g->season_toi_tenths : g->toi_tenths;
+	scoreboard_format_toi(toi_tenths, toi, sizeof(toi));
+	char gaa[16];
+	scoreboard_format_gaa(ga, toi_tenths, gaa, sizeof(gaa));
+	snprintf(buf, size, "#%-3d SA %3d  GA %2d  SV%% %s  GAA %s  TOI %s",
+		 g->number, sa, ga, sv, gaa, toi);
 }
 
 void scoreboard_format_goalie_lines(bool season, char *buf, size_t size)
@@ -1775,12 +1935,15 @@ static void goalie_array_to_string(const struct scoreboard_goalie *goalies,
 	size_t len = 0;
 	for (int i = 0; i < count; i++) {
 		const struct scoreboard_goalie *g = &goalies[i];
-		char item[128];
+		char item[160];
 		snprintf(item, sizeof(item), "%d:%d:%d:%d:%d:%d:%d:%d:%d",
 			 g->number, g->shots_against, g->goals_against,
 			 g->season_shots_against, g->season_goals_against,
 			 g->games, g->played ? 1 : 0, g->toi_tenths,
 			 g->season_toi_tenths);
+		if (g->name[0] != '\0')
+			snprintf(item + strlen(item), sizeof(item) - strlen(item),
+				 "=%s", g->name);
 		size_t item_len = strlen(item);
 		size_t need = item_len + (len > 0 ? 1 : 0);
 		if (len + need >= size)
@@ -1821,8 +1984,10 @@ void scoreboard_goalies_from_string(const char *text)
 			fields[read] = strtol(p + 1, &end, 10);
 			p = end;
 		}
+		const char *name_start = (readable && *p == '=') ? p + 1 : NULL;
 		while (*p != '\0' && *p != ',' && *p != ';')
 			p++;
+		const char *name_end = p;
 		if (*p == ',')
 			p++;
 		if (!readable)
@@ -1839,6 +2004,9 @@ void scoreboard_goalies_from_string(const char *text)
 		g->played = fields[5] != 0;
 		g->toi_tenths = clamp_zero((int)fields[6]);
 		g->season_toi_tenths = clamp_zero((int)fields[7]);
+		if (name_start != NULL)
+			name_copy(g->name, name_start,
+				  (size_t)(name_end - name_start));
 	}
 	if (*p == ';') {
 		long in_net = strtol(p + 1, NULL, 10);
@@ -3800,6 +3968,23 @@ bool scoreboard_write_all_files(void)
 		scoreboard_format_goalie_lines(true, pm_buf, sizeof(pm_buf));
 		ok = write_text_file(dir, "home_goalies_season.txt", pm_buf) &&
 		     ok;
+		/* One small file per player and per goalie. */
+		for (int i = 0; i < g_state.home_roster_count; i++) {
+			char name[32];
+			const int number = g_state.home_roster[i].number;
+			scoreboard_format_player_file(number, pm_buf,
+						      sizeof(pm_buf));
+			snprintf(name, sizeof(name), "player_%d.txt", number);
+			ok = write_text_file(dir, name, pm_buf) && ok;
+		}
+		for (int i = 0; i < g_state.goalie_count; i++) {
+			char name[32];
+			const int number = g_state.goalies[i].number;
+			scoreboard_format_goalie_file(number, pm_buf,
+						      sizeof(pm_buf));
+			snprintf(name, sizeof(name), "goalie_%d.txt", number);
+			ok = write_text_file(dir, name, pm_buf) && ok;
+		}
 	}
 
 	g_dirty = false;
@@ -4047,6 +4232,7 @@ bool scoreboard_save_state(const char *path)
 		fprintf(f, "  \"home_player%d_games\": %d,\n", i, p->games);
 		fprintf(f, "  \"home_player%d_out\": %s,\n", i,
 			p->out ? "true" : "false");
+		fprintf(f, "  \"home_player%d_name\": \"%s\",\n", i, p->name);
 	}
 	fprintf(f, "  \"goalie_count\": %d,\n", g_state.goalie_count);
 	for (int i = 0; i < g_state.goalie_count; i++) {
@@ -4064,6 +4250,7 @@ bool scoreboard_save_state(const char *path)
 			g->season_toi_tenths);
 		fprintf(f, "  \"goalie%d_played\": %s,\n", i,
 			g->played ? "true" : "false");
+		fprintf(f, "  \"goalie%d_name\": \"%s\",\n", i, g->name);
 	}
 	fprintf(f, "  \"goalie_in_net\": %d,\n",
 		scoreboard_get_goalie_in_net());
@@ -4257,6 +4444,9 @@ bool scoreboard_load_state(const char *path)
 			p->games = clamp_zero(parse_json_int(json, key, 0));
 			snprintf(key, sizeof(key), "home_player%d_out", i);
 			p->out = parse_json_bool(json, key, false);
+			snprintf(key, sizeof(key), "home_player%d_name", i);
+			parse_json_string(json, key, p->name,
+					  sizeof(p->name));
 		}
 		if (rcount >= 0)
 			g_state.home_roster_count = rcount;
@@ -4289,6 +4479,8 @@ bool scoreboard_load_state(const char *path)
 				clamp_zero(parse_json_int(json, key, 0));
 			snprintf(key, sizeof(key), "goalie%d_played", i);
 			g->played = parse_json_bool(json, key, false);
+			snprintf(key, sizeof(key), "goalie%d_name", i);
+			parse_json_string(json, key, g->name, sizeof(g->name));
 		}
 		if (gcount >= 0) {
 			g_state.goalie_count = gcount;
