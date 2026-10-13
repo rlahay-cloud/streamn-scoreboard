@@ -107,6 +107,7 @@ static struct {
 	bool has_goalie_in_net;
 	int goalie_in_net;
 	bool away_goal_ends_penalty;
+	int gaa_minutes; /* game length that GAA is worked out per */
 	bool game_ended;
 	int ended_players[SCOREBOARD_MAX_ROSTER];
 	int ended_player_count;
@@ -508,6 +509,7 @@ void scoreboard_reset_state_for_tests(void)
 	g_state.log_scores = true;
 	g_state.pm_skip_power_play = true;
 	g_state.away_goal_ends_penalty = true;
+	g_state.gaa_minutes = SCOREBOARD_DEFAULT_GAA_MINUTES;
 	safe_copy(g_state.score_label, "Goal", sizeof(g_state.score_label));
 	safe_copy(g_state.penalty_label_format, kDefaultPenaltyLabelFormat,
 		  sizeof(g_state.penalty_label_format));
@@ -1170,6 +1172,7 @@ bool scoreboard_export_backup(const char *path)
 	scoreboard_lines_to_string(buf, sizeof(buf));
 	fprintf(f, "lines=%s\n", buf);
 	fprintf(f, "pm_skip_power_play=%d\n", g_state.pm_skip_power_play ? 1 : 0);
+	fprintf(f, "gaa_minutes=%d\n", g_state.gaa_minutes);
 	fprintf(f, "away_goal_ends_penalty=%d\n",
 		g_state.away_goal_ends_penalty ? 1 : 0);
 	fclose(f);
@@ -1198,6 +1201,8 @@ bool scoreboard_import_backup(const char *path)
 			scoreboard_lines_from_string(line + 6);
 		else if (strncmp(line, "pm_skip_power_play=", 19) == 0)
 			g_state.pm_skip_power_play = atoi(line + 19) != 0;
+		else if (strncmp(line, "gaa_minutes=", 12) == 0)
+			scoreboard_set_gaa_minutes(atoi(line + 12));
 		else if (strncmp(line, "away_goal_ends_penalty=", 23) == 0)
 			g_state.away_goal_ends_penalty = atoi(line + 23) != 0;
 	}
@@ -1785,6 +1790,21 @@ static void pm_forget_goals(bool home_scored)
 
 /* ---- away goal ends a home minor penalty ---- */
 
+void scoreboard_set_gaa_minutes(int minutes)
+{
+	if (minutes < 1)
+		minutes = 1;
+	if (minutes > 120)
+		minutes = 120;
+	g_state.gaa_minutes = minutes;
+	mark_dirty();
+}
+
+int scoreboard_get_gaa_minutes(void)
+{
+	return g_state.gaa_minutes;
+}
+
 void scoreboard_set_away_goal_ends_penalty(bool enabled)
 {
 	g_state.away_goal_ends_penalty = enabled;
@@ -1882,8 +1902,8 @@ void scoreboard_format_gaa(int goals_against, int toi_tenths, char *buf,
 		snprintf(buf, size, "-");
 		return;
 	}
-	/* 60 minutes = 36000 tenths of a second */
-	snprintf(buf, size, "%.2f", (double)goals_against * 36000.0 / toi_tenths);
+	snprintf(buf, size, "%.2f",
+		 (double)goals_against * g_state.gaa_minutes * 600.0 / toi_tenths);
 }
 
 static void goalie_line(const struct scoreboard_goalie *g, bool season,
@@ -4254,6 +4274,7 @@ bool scoreboard_save_state(const char *path)
 	}
 	fprintf(f, "  \"goalie_in_net\": %d,\n",
 		scoreboard_get_goalie_in_net());
+	fprintf(f, "  \"gaa_minutes\": %d,\n", g_state.gaa_minutes);
 	fprintf(f, "  \"away_goal_ends_penalty\": %s,\n",
 		g_state.away_goal_ends_penalty ? "true" : "false");
 
@@ -4488,6 +4509,10 @@ bool scoreboard_load_state(const char *path)
 			scoreboard_set_goalie_in_net(
 				parse_json_int(json, "goalie_in_net", -1));
 		}
+		g_state.gaa_minutes = parse_json_int(
+			json, "gaa_minutes", SCOREBOARD_DEFAULT_GAA_MINUTES);
+		if (g_state.gaa_minutes < 1 || g_state.gaa_minutes > 120)
+			g_state.gaa_minutes = SCOREBOARD_DEFAULT_GAA_MINUTES;
 		g_state.away_goal_ends_penalty = parse_json_bool(
 			json, "away_goal_ends_penalty",
 			g_state.away_goal_ends_penalty);

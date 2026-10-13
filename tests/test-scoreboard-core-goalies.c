@@ -1278,27 +1278,63 @@ static void test_goals_against_average(void)
 {
 	char buf[32];
 	char tiny[1] = {'x'};
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_get_gaa_minutes() == 32);
 	scoreboard_format_gaa(2, 0, buf, sizeof(buf));
 	assert(strcmp(buf, "-") == 0);
 	scoreboard_format_gaa(2, -5, buf, sizeof(buf));
 	assert(strcmp(buf, "-") == 0);
-	/* 2 goals in 20 minutes = 6.00 per 60 */
+	/* 2 goals in 16 minutes of a 32 minute game = 4.00 */
+	scoreboard_format_gaa(2, 9600, buf, sizeof(buf));
+	assert(strcmp(buf, "4.00") == 0);
+	scoreboard_format_gaa(0, 9600, buf, sizeof(buf));
+	assert(strcmp(buf, "0.00") == 0);
+	scoreboard_format_gaa(1, 19200, buf, sizeof(buf));
+	assert(strcmp(buf, "1.00") == 0);
+	scoreboard_format_gaa(1, 19200, tiny, 0);
+	assert(tiny[0] == 'x');
+
+	/* the game length is a setting */
+	scoreboard_set_gaa_minutes(60);
+	assert(scoreboard_get_gaa_minutes() == 60);
 	scoreboard_format_gaa(2, 12000, buf, sizeof(buf));
 	assert(strcmp(buf, "6.00") == 0);
-	scoreboard_format_gaa(0, 12000, buf, sizeof(buf));
-	assert(strcmp(buf, "0.00") == 0);
-	scoreboard_format_gaa(1, 36000, buf, sizeof(buf));
-	assert(strcmp(buf, "1.00") == 0);
-	scoreboard_format_gaa(1, 36000, tiny, 0);
-	assert(tiny[0] == 'x');
+	scoreboard_set_gaa_minutes(0);
+	assert(scoreboard_get_gaa_minutes() == 1);
+	scoreboard_set_gaa_minutes(500);
+	assert(scoreboard_get_gaa_minutes() == 120);
+	scoreboard_set_gaa_minutes(32);
 
 	setup();
 	scoreboard_goalie_set_goals_against(31, 2);
-	scoreboard_goalie_set_toi_seconds(31, 1200);
+	scoreboard_goalie_set_toi_seconds(31, 960);
 	scoreboard_set_goalie_in_net(31);
 	char line[128];
 	scoreboard_format_goalie_in_net(line, sizeof(line));
-	assert(strstr(line, "GAA 6.00") != NULL);
+	assert(strstr(line, "GAA 4.00") != NULL);
+
+	/* kept in the saved state and the backup file */
+	setup_tmp_dir();
+	char path[512];
+	scoreboard_set_gaa_minutes(45);
+	snprintf(path, sizeof(path), "%s/state.json", g_tmp_dir);
+	assert(scoreboard_save_state(path));
+	scoreboard_set_gaa_minutes(20);
+	assert(scoreboard_load_state(path));
+	assert(scoreboard_get_gaa_minutes() == 45);
+	snprintf(path, sizeof(path), "%s/backup.txt", g_tmp_dir);
+	assert(scoreboard_export_backup(path));
+	scoreboard_set_gaa_minutes(20);
+	assert(scoreboard_import_backup(path));
+	assert(scoreboard_get_gaa_minutes() == 45);
+	/* an older state file, or a silly number, falls back to the default */
+	snprintf(path, sizeof(path), "%s/old.json", g_tmp_dir);
+	FILE *f = fopen(path, "w");
+	fprintf(f, "{\n  \"goalie_count\": 0,\n  \"gaa_minutes\": 999\n}\n");
+	fclose(f);
+	assert(scoreboard_load_state(path));
+	assert(scoreboard_get_gaa_minutes() == 32);
+	cleanup_tmp_dir();
 }
 
 /* ---- names and one file per player ---- */
@@ -1417,8 +1453,8 @@ static void test_player_and_goalie_files(void)
 	scoreboard_goalie_set_toi_seconds(31, 1200);
 	assert(scoreboard_format_goalie_file(31, buf, sizeof(buf)));
 	assert(strcmp(buf, "#31 Sam Wall\n"
-			   "Game: SA 10 | GA 2 | SV% .800 | GAA 6.00 | TOI 20:00\n"
-			   "Season: 0 GP | SA 10 | GA 2 | SV% .800 | GAA 6.00 | TOI 20:00\n") == 0);
+			   "Game: SA 10 | GA 2 | SV% .800 | GAA 3.20 | TOI 20:00\n"
+			   "Season: 0 GP | SA 10 | GA 2 | SV% .800 | GAA 3.20 | TOI 20:00\n") == 0);
 	assert(scoreboard_format_goalie_file(35, buf, sizeof(buf)));
 	assert(strstr(buf, "SV% - | GAA - | TOI 0:00\n") != NULL);
 
@@ -1436,7 +1472,7 @@ static void test_player_and_goalie_files(void)
 	free(content);
 	snprintf(path, sizeof(path), "%s/goalie_31.txt", g_tmp_dir);
 	content = read_file_content(path);
-	assert(content != NULL && strstr(content, "GAA 6.00") != NULL);
+	assert(content != NULL && strstr(content, "GAA 3.20") != NULL);
 	free(content);
 	snprintf(path, sizeof(path), "%s/goalie_35.txt", g_tmp_dir);
 	content = read_file_content(path);

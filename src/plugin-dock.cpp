@@ -78,6 +78,7 @@ const char *kPlusMinusCountPowerPlayKey = "pm_count_power_play_goals";
 const char *kSkipScorerPromptKey = "skip_scorer_prompt";
 const char *kHomeGoaliesKey = "home_goalies";
 const char *kLinesKey = "home_lines";
+const char *kGaaMinutesKey = "gaa_minutes";
 const char *kReopenMemoryKey = "reopen_memory";
 /* Stored inverted so the "away goal ends a home minor" rule is on by default. */
 const char *kKeepPenaltyOnAwayGoalKey = "keep_penalty_on_away_goal";
@@ -1320,7 +1321,7 @@ void edit_goalie_stats(QWidget *parent, int number)
 	grid->addWidget(game_toi, 4, 1);
 	grid->addWidget(season_toi, 4, 2);
 	QLabel *note = new QLabel(
-		"Save % is worked out from SA and GA, and GAA (goals against per 60 minutes in net) from GA and time on ice. Time on ice counts up by itself while the clock runs and this goalie is in net. Changing a game number also moves the season number by the same amount.",
+		"Save % is worked out from SA and GA, and GAA (goals against per game length, set in the Roster menu) from GA and time on ice. Time on ice counts up by itself while the clock runs and this goalie is in net. Changing a game number also moves the season number by the same amount.",
 		&dialog);
 	note->setWordWrap(true);
 	note->setStyleSheet("font-size: 10px; color: gray;");
@@ -1859,6 +1860,7 @@ void show_roster_menu(QWidget *parent, QWidget *anchor)
 	QAction *add_action = menu.addAction("Add players...");
 	QAction *add_goalie_action = menu.addAction("Add goalies...");
 	QAction *names_action = menu.addAction("Player and goalie names...");
+	QAction *gaa_action = menu.addAction("Goalie GAA game length...");
 	QAction *lineup_action = menu.addAction("Today's lineup...");
 	QAction *lines_action = menu.addAction("Forward lines and defence pairs...");
 	QAction *save_backup_action = menu.addAction("Save season backup...");
@@ -1907,6 +1909,14 @@ void show_roster_menu(QWidget *parent, QWidget *anchor)
 			QLineEdit::Normal, QString(), &ok);
 		if (ok)
 			add_goalies_from_text(text);
+	} else if (chosen == gaa_action) {
+		bool ok = false;
+		const int minutes = QInputDialog::getInt(
+			parent, "Goalie GAA game length",
+			"Goals against average is worked out per game of this many minutes (32 for this league, 60 for pro hockey):",
+			scoreboard_get_gaa_minutes(), 1, 120, 1, &ok);
+		if (ok)
+			scoreboard_set_gaa_minutes(minutes);
 	} else if (chosen == names_action) {
 		open_names_dialog(parent);
 	} else if (chosen == lineup_action) {
@@ -2518,7 +2528,8 @@ QString current_roster_key(char *buf, size_t size)
 	       QString::fromUtf8(memory_buf) +
 	       (scoreboard_get_plus_minus_skip_power_play() ? "|1" : "|0") +
 	       (g_ask_scorer ? "|1" : "|0") +
-	       (scoreboard_get_away_goal_ends_penalty() ? "|1" : "|0");
+	       (scoreboard_get_away_goal_ends_penalty() ? "|1" : "|0") + "|" +
+	       QString::number(scoreboard_get_gaa_minutes());
 }
 
 void persist_rosters_if_changed()
@@ -2544,6 +2555,8 @@ void persist_rosters_if_changed()
 	scoreboard_reopen_memory_to_string(memory_buf, sizeof(memory_buf));
 	config_set_string(profile_cfg, kConfigSection, kReopenMemoryKey,
 			  memory_buf);
+	config_set_int(profile_cfg, kConfigSection, kGaaMinutesKey,
+		       scoreboard_get_gaa_minutes());
 	config_set_bool(profile_cfg, kConfigSection, kKeepPenaltyOnAwayGoalKey,
 			!scoreboard_get_away_goal_ends_penalty());
 	config_set_bool(profile_cfg, kConfigSection,
@@ -2621,6 +2634,11 @@ void load_profile_paths()
 			profile_cfg, kConfigSection, kLinesKey));
 		scoreboard_reopen_memory_from_string(config_get_string(
 			profile_cfg, kConfigSection, kReopenMemoryKey));
+		/* 0 (never saved) keeps the default game length. */
+		const int saved_gaa = (int)config_get_int(
+			profile_cfg, kConfigSection, kGaaMinutesKey);
+		if (saved_gaa > 0)
+			scoreboard_set_gaa_minutes(saved_gaa);
 		scoreboard_set_away_goal_ends_penalty(!config_get_bool(
 			profile_cfg, kConfigSection, kKeepPenaltyOnAwayGoalKey));
 		scoreboard_set_plus_minus_skip_power_play(!config_get_bool(

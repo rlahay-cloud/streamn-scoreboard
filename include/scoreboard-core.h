@@ -483,7 +483,12 @@ bool scoreboard_goalie_set_name(int number, const char *name);
 const char *scoreboard_goalie_get_name(int number);
 bool scoreboard_format_player_file(int number, char *buf, size_t size);
 bool scoreboard_format_goalie_file(int number, char *buf, size_t size);
-/* Goals against average: goals per 60 minutes in net; "-" before any time. */
+/* Goals against average: goals per game length in net ("-" before any
+ * time). The game length is a setting in minutes (1 to 120, default 32, the
+ * length of a game in this league; pro hockey uses 60). */
+#define SCOREBOARD_DEFAULT_GAA_MINUTES 32
+void scoreboard_set_gaa_minutes(int minutes);
+int scoreboard_get_gaa_minutes(void);
 void scoreboard_format_gaa(int goals_against, int toi_tenths, char *buf,
 			   size_t size);
 
