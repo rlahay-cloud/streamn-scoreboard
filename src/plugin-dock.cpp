@@ -79,6 +79,7 @@ const char *kSkipScorerPromptKey = "skip_scorer_prompt";
 const char *kHomeGoaliesKey = "home_goalies";
 const char *kLinesKey = "home_lines";
 const char *kGaaMinutesKey = "gaa_minutes";
+const char *kEventLeadKey = "event_lead_seconds";
 const char *kReopenMemoryKey = "reopen_memory";
 /* Stored inverted so the "away goal ends a home minor" rule is on by default. */
 const char *kKeepPenaltyOnAwayGoalKey = "keep_penalty_on_away_goal";
@@ -669,6 +670,10 @@ int stream_offset_seconds()
    the button.  Clamped so it never goes below 0:00:00. */
 static const int kGoalDelaySeconds = 10;
 
+/* Extra seconds subtracted from goal and penalty times in timestamps.txt, so
+   a YouTube chapter lands just before the play. Set in Settings. */
+int g_event_lead_seconds = 7;
+
 void log_event(const char *label)
 {
 	int offset;
@@ -693,6 +698,20 @@ void log_event_with_offset(const char *label, int offset)
 	scoreboard_event_log_add(offset, label);
 	write_timestamps_file();
 	update_copy_timestamps_visibility();
+}
+
+/* Like log_event(), but marks the time `early` seconds before now. */
+void log_event_early(const char *label, int early)
+{
+	int offset;
+	if (scoreboard_get_game_clock_enabled()) {
+		offset = scoreboard_game_clock_get_tenths() / 10;
+	} else {
+		offset = stream_offset_seconds();
+		if (offset < 0)
+			return;
+	}
+	log_event_with_offset(label, offset - early);
 }
 
 void remove_last_event(const char *prefix)
@@ -751,12 +770,13 @@ void log_goal_event(bool home)
 
 	if (scoreboard_get_game_clock_enabled()) {
 		int offset = scoreboard_game_clock_get_tenths() / 10;
-		log_event_with_offset(buf, offset - kGoalDelaySeconds);
+		log_event_with_offset(buf, offset - kGoalDelaySeconds -
+						   g_event_lead_seconds);
 	} else {
 		int offset = stream_offset_seconds();
 		if (offset >= 0)
-			log_event_with_offset(buf,
-					      offset - kGoalDelaySeconds);
+			log_event_with_offset(buf, offset - kGoalDelaySeconds -
+							   g_event_lead_seconds);
 	}
 	add_recording_chapter_delayed(buf, kGoalDelaySeconds);
 }
@@ -785,7 +805,7 @@ void log_penalty_event(bool home, int player_number)
 		snprintf(buf, sizeof(buf), "Penalty: %s",
 			 home ? scoreboard_get_home_name()
 			      : scoreboard_get_away_name());
-	log_event(buf);
+	log_event_early(buf, g_event_lead_seconds);
 	add_recording_chapter(buf);
 }
 
@@ -901,7 +921,12 @@ const char *kOnIceButtonStyle =
 	"QPushButton { font-family: 'Menlo','Consolas','DejaVu Sans Mono',"
 	"'Courier New',monospace; font-size: 13px; text-align: left;"
 	" padding: 3px 8px; min-height: 22px; }";
-const int kRosterColumns = 2;
+/* One player per row when names are long, otherwise two. */
+int g_roster_columns = 2;
+int g_built_columns = -1;
+/* Width, in letters, of the name column in the player rows (0: no names). */
+int g_name_width = 0;
+QScrollArea *g_roster_scroll = nullptr;
 
 bool g_ask_scorer = true;
 /* 0 = this game, 1 = whole season (what the roster buttons show) */
@@ -947,10 +972,28 @@ QString goalie_label(int number)
 			      : QString("#%1 %2").arg(number).arg(name);
 }
 
-/* A name cut or padded to 10 letters so the stat columns line up. */
+/* A name padded to the width of the longest name so the stat columns line
+   up. Nothing is cut: the width always fits the longest name. */
 QString name_cell(const char *name)
 {
-	return QString::fromUtf8(name).left(10).leftJustified(10, QLatin1Char(' '));
+	return QString::fromUtf8(name).leftJustified(g_name_width, QLatin1Char(' '));
+}
+
+/* Work out the name column width from the longest name of any player or
+   goalie, and use one player per row once the names are long. */
+void update_name_width()
+{
+	int width = 0;
+	for (int i = 0; i < scoreboard_roster_count(); i++)
+		width = qMax(width,
+			     (int)QString::fromUtf8(scoreboard_roster_get(i)->name)
+				     .size());
+	for (int i = 0; i < scoreboard_goalie_count(); i++)
+		width = qMax(width,
+			     (int)QString::fromUtf8(scoreboard_goalie_get(i)->name)
+				     .size());
+	g_name_width = width;
+	g_roster_columns = width > 8 ? 1 : 2;
 }
 
 /* Combo box of roster players; the data of each item is the jersey number,
@@ -1428,6 +1471,7 @@ void show_goalie_menu(QWidget *button, int number, const QPoint &pos)
    goalie in net. The goalie in net is marked NET. */
 void update_goalie_rows()
 {
+	update_name_width();
 	if (g_goalie_rows == nullptr || g_goalie_container == nullptr)
 		return;
 	const int count = scoreboard_goalie_count();
@@ -2015,10 +2059,12 @@ void update_onice_team(onice_widgets &w)
 	if (!w.grid)
 		return;
 
+	update_name_width();
 	const int count = scoreboard_roster_count();
 
 	/* Rebuild the buttons only when the roster itself changed. */
-	bool need_rebuild = (w.numbers.size() != count);
+	bool need_rebuild = (w.numbers.size() != count) ||
+			    (g_built_columns != g_roster_columns);
 	if (!need_rebuild) {
 		for (int i = 0; i < count; i++) {
 			if (w.numbers[i] != scoreboard_roster_get(i)->number) {
@@ -2036,6 +2082,7 @@ void update_onice_team(onice_widgets &w)
 		}
 		w.buttons.clear();
 		w.numbers.clear();
+		g_built_columns = g_roster_columns;
 
 		for (int i = 0; i < count; i++) {
 			const int number = scoreboard_roster_get(i)->number;
@@ -2053,8 +2100,8 @@ void update_onice_team(onice_widgets &w)
 				[btn, number](const QPoint &pos) {
 					show_player_menu(btn, number, pos);
 				});
-			w.grid->addWidget(btn, i / kRosterColumns,
-					  i % kRosterColumns);
+			w.grid->addWidget(btn, i / g_roster_columns,
+					  i % g_roster_columns);
 			btn->show();
 			w.buttons.push_back(btn);
 			w.numbers.push_back(number);
@@ -2074,6 +2121,18 @@ void update_onice_team(onice_widgets &w)
 	if (w.title) {
 		w.title->setText(show_season_stats() ? "Home Players, Season"
 						     : "Home Players, This Game");
+	}
+
+	/* Make the window wide enough for the longest row, and tall enough for
+	   the roster up to a limit (then it scrolls). */
+	if (g_roster_scroll != nullptr && w.container != nullptr) {
+		const QSize hint = w.container->sizeHint();
+		const int want_w = hint.width() + 24;
+		const int want_h = qMin(hint.height() + 4, 560);
+		if (g_roster_scroll->minimumWidth() != want_w)
+			g_roster_scroll->setMinimumWidth(want_w);
+		if (g_roster_scroll->minimumHeight() != want_h)
+			g_roster_scroll->setMinimumHeight(want_h);
 	}
 }
 
@@ -2105,7 +2164,11 @@ void open_stats_dialog(QWidget *parent)
 		w.grid = new QGridLayout(w.container);
 		w.grid->setContentsMargins(0, 0, 0, 0);
 		w.grid->setSpacing(2);
-		col->addWidget(w.container);
+		g_roster_scroll = new QScrollArea(g_stats_dialog);
+		g_roster_scroll->setWidgetResizable(true);
+		g_roster_scroll->setFrameShape(QFrame::NoFrame);
+		g_roster_scroll->setWidget(w.container);
+		col->addWidget(g_roster_scroll, 1);
 
 		g_goalie_container = new QWidget(g_stats_dialog);
 		g_goalie_rows = new QVBoxLayout(g_goalie_container);
@@ -2614,6 +2677,10 @@ void load_profile_paths()
 					     kEnvFileKey);
 		g_record_chapters_enabled = config_get_bool(
 			profile_cfg, kConfigSection, kRecordChaptersKey);
+		if (config_has_user_value(profile_cfg, kConfigSection,
+					  kEventLeadKey))
+			g_event_lead_seconds = (int)config_get_int(
+				profile_cfg, kConfigSection, kEventLeadKey);
 		scoreboard_set_game_clock_enabled(config_get_bool(
 			profile_cfg, kConfigSection,
 			kGameClockEnabledKey));
@@ -2674,6 +2741,8 @@ void save_profile_paths()
 			  g_environment_file.toUtf8().constData());
 	config_set_bool(profile_cfg, kConfigSection, kRecordChaptersKey,
 			g_record_chapters_enabled);
+	config_set_int(profile_cfg, kConfigSection, kEventLeadKey,
+		       g_event_lead_seconds);
 	config_set_bool(profile_cfg, kConfigSection, kGameClockEnabledKey,
 			scoreboard_get_game_clock_enabled());
 	config_set_int(profile_cfg, kConfigSection, kGameClockFormatKey,
@@ -3336,6 +3405,20 @@ void open_clock_settings_dialog(QWidget *parent)
 	}
 	layout->addWidget(chapters_check);
 
+	QHBoxLayout *lead_row = new QHBoxLayout();
+	lead_row->addWidget(new QLabel("Timestamp lead time (seconds):", &dialog));
+	QSpinBox *lead_spin = new QSpinBox(&dialog);
+	lead_spin->setRange(0, 60);
+	lead_spin->setValue(g_event_lead_seconds);
+	lead_spin->setToolTip(
+		"Goals and penalties are marked this many seconds earlier in timestamps.txt, "
+		"so a YouTube chapter starts just before the play.\n"
+		"Goals are also always marked 10 seconds earlier for the time it takes to press the button, "
+		"so a goal is marked 10 plus this many seconds before the button press.");
+	lead_row->addWidget(lead_spin);
+	lead_row->addStretch(1);
+	layout->addLayout(lead_row);
+
 	QLabel *gc_header = new QLabel("<b>Game Clock</b>", &dialog);
 	layout->addWidget(gc_header);
 
@@ -3399,6 +3482,7 @@ void open_clock_settings_dialog(QWidget *parent)
 			cli_args_input->text().trimmed().toUtf8().constData());
 		g_environment_file = env_file_input->text().trimmed();
 		g_record_chapters_enabled = chapters_check->isChecked();
+		g_event_lead_seconds = lead_spin->value();
 		scoreboard_set_game_clock_enabled(
 			game_clock_check->isChecked());
 		scoreboard_set_game_clock_display_format(

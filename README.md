@@ -240,6 +240,8 @@ When OBS is streaming, events are logged with stream-relative timestamps. Click 
 
 A `timestamps.txt` file is also written to your output directory after every event.
 
+**Timestamp lead time:** goals and penalties are marked a few seconds before you pressed the button, so a YouTube chapter starts just before the play. In Game Settings, **Timestamp lead time (seconds)** (default 7) is taken off both goals and penalties. Goals are also always marked 10 seconds early for the time it takes to press the button, so a goal is marked 17 seconds early by default and a penalty 7. Recording chapter markers inside video files are not changed by this setting.
+
 ### Recording Chapters
 
 Enable **"Record chapters in game file"** in Game Settings to track events in your local recordings:
