@@ -926,7 +926,6 @@ int g_roster_columns = 2;
 int g_built_columns = -1;
 /* Width, in letters, of the name column in the player rows (0: no names). */
 int g_name_width = 0;
-QScrollArea *g_roster_scroll = nullptr;
 
 bool g_ask_scorer = true;
 /* 0 = this game, 1 = whole season (what the roster buttons show) */
@@ -2123,17 +2122,6 @@ void update_onice_team(onice_widgets &w)
 						     : "Home Players, This Game");
 	}
 
-	/* Make the window wide enough for the longest row, and tall enough for
-	   the roster up to a limit (then it scrolls). */
-	if (g_roster_scroll != nullptr && w.container != nullptr) {
-		const QSize hint = w.container->sizeHint();
-		const int want_w = hint.width() + 24;
-		const int want_h = qMin(hint.height() + 4, 560);
-		if (g_roster_scroll->minimumWidth() != want_w)
-			g_roster_scroll->setMinimumWidth(want_w);
-		if (g_roster_scroll->minimumHeight() != want_h)
-			g_roster_scroll->setMinimumHeight(want_h);
-	}
 }
 
 /* The roster and stats live in their own window, opened from one button in
@@ -2164,11 +2152,7 @@ void open_stats_dialog(QWidget *parent)
 		w.grid = new QGridLayout(w.container);
 		w.grid->setContentsMargins(0, 0, 0, 0);
 		w.grid->setSpacing(2);
-		g_roster_scroll = new QScrollArea(g_stats_dialog);
-		g_roster_scroll->setWidgetResizable(true);
-		g_roster_scroll->setFrameShape(QFrame::NoFrame);
-		g_roster_scroll->setWidget(w.container);
-		col->addWidget(g_roster_scroll, 1);
+		col->addWidget(w.container);
 
 		g_goalie_container = new QWidget(g_stats_dialog);
 		g_goalie_rows = new QVBoxLayout(g_goalie_container);
