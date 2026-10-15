@@ -13,7 +13,7 @@ OBS Studio plugin that tracks live game scoreboard state and writes it to indivi
 ## Features
 
 - **7 sport presets** — hockey, basketball, soccer, football, lacrosse, rugby, and generic
-- **39 text files** (plus `game_summary.txt` and `season_backup.txt` at End Game) updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals, assists, penalty minutes and points per game (game and season), goalie shots against, goals against and save percentage, faceoff percentage, sport, and more
+- **38 text files** (plus `game_summary.txt` and `season_backup.txt` at End Game) updated in real-time: clock, period, scores, shots, team names, penalties, penalty labels, fouls, home player plus/minus, goals, assists, penalty minutes and points per game (game and season), goalie shots against, goals against and save percentage, faceoff percentage, sport, and more
 - **Dock UI** with full scoreboard controls in an OBS dock panel
 - **45 OBS hotkeys** for hands-free operation during broadcasts
 - **Penalty tracking** with automatic countdown timers, compound penalties (2+2, 2+5, 2+10), edit/clear per slot (hockey, lacrosse, rugby)
@@ -152,8 +152,7 @@ Set an output directory in the dock settings. The plugin writes these files on e
 | `home_faceoffs.txt` | Home faceoff wins | `8` |
 | `away_faceoffs.txt` | Away faceoff wins | `6` |
 | `cumulative_clock.txt` | Cumulative game clock (when enabled) | `32:15` |
-| `period_length.txt` | Length in seconds of the period being played | `600` |
-| `period_lengths.txt` | Length in seconds of every period (hockey: 10, 10, 12 minutes, then 5 minute overtimes) | `600,600,720,300,300,300,300` |
+| `period_length.txt` | Period length in seconds | `900` |
 | `period_labels.txt` | Period display names | `1,2,3,OT` |
 | `default_penalty_duration.txt` | Minor penalty duration (seconds) | `120` |
 | `default_major_penalty_duration.txt` | Major penalty duration (seconds) | `300` |
@@ -175,7 +174,7 @@ Each row in the Home Players window reads like `#12    +2   1G  2A  3P` (jersey 
 - **Game numbers** start at zero for each game (**New Game** clears them but keeps the roster).
 - **Season numbers** keep adding up from game to game. Anything that changes a game number (a goal, or an edit) changes the season number by the same amount. Use **Roster... > Reset season totals (new season)** when a new season starts.
 - **Manual changes:** click a player (or right-click for more) and choose **Edit** to type in exact game and season +/-, goals and assists. If you only change a game number, the season number follows. If you type a season number, it is used as typed.
-- **Fixing a goal later:** **Roster... > Last home goal...** and **Last away goal...** reopen the window for the most recent goal. The on-ice boxes show who was already named, so you can change them and the +/- moves to the right players. Leave scorer and assists on "(nobody)" to keep the credit already there. The goal buttons themselves only change the score; nothing pops up. Who scored and assisted is checked on the End Game screen.
+- **Fixing a goal later:** **Roster... > Last home goal...** and **Last away goal...** reopen the window for the most recent goal. The on-ice boxes show who was already named, so you can change them and the +/- moves to the right players. Leave scorer and assists on "(nobody)" to keep the credit already there. You can turn the window off with **Roster... > Ask about each goal**.
 - Taking a goal back with the score "-" button removes its credit and +/- changes. Typing a score in directly, or editing the score files, cannot be matched to earlier goals, so those are not reversed.
 - The roster and all numbers are remembered when you restart OBS.
 - For your overlay, point a Text source at `home_plus_minus.txt` or `home_season_plus_minus.txt` for the whole roster, `home_scoring.txt` for this game's goals and assists, `home_season_scoring.txt` for the whole roster's season points, or `last_goal.txt` for a "who just scored" line. Use a fixed-width font (like Consolas or Courier New) in the Text source so the columns line up.
@@ -196,7 +195,7 @@ These all sit with the player stats (hockey only).
 - **Penalty minutes (PIM):** when you add a home penalty with a player number that is on the roster, the penalty minutes (2, 4, 5 and so on) are added to that player for the game and the season. `home_pim.txt` lists them. Deleting a penalty by hand (the small clear button or its hotkey) takes its minutes back off the player, for the game and the season. A penalty that runs out on its own, or is ended by an away goal, keeps its minutes. Adding a home penalty now shows your roster as tick boxes (pick one player) instead of a number box.
 - **Away goal ends a home minor:** when the away team scores while your team is short-handed, the first running minor ends. A 2 minute penalty is removed, a 4 minute penalty drops to 2, and a 2+2 moves to its second part. Majors (5 minutes or more) never end this way, and nothing happens when both teams have the same number of penalties (4 on 4). Taking the goal back does not bring the penalty back. Turn this off with **Roster... > Away goal ends a home minor penalty**.
 - **Points per game (PPG):** `home_ppg.txt` lists each player's points divided by games played. A game counts only after you press **End Game**, so the number does not jump around during a game.
-- **End Game:** press **End Game...** in the dock. A review screen lists each dressed player with goals, assists, +/- and penalty minutes (fix any number there), each goalie's shots and goals against, and whether the goals entered match the home score. Untick **Played** for anyone who did not play. Press **End Game** to confirm. Everyone ticked gets one game played, goalies who were in net get one too, and a summary of the score, shots, faceoffs, every player's game and season numbers and every goalie's numbers is written to `game_summary.txt` in your output folder. A dated copy (like `game_summary_2026-10-09_193000.txt`) is saved next to it so the next game does not overwrite it. If you press New Game before ending, the dock asks if you want to end the game first.
+- **End Game:** press **End Game...** in the dock and confirm. Everyone in today's lineup gets one game played, goalies who were in net get one too, and a summary of the score, shots, faceoffs, every player's game and season numbers and every goalie's numbers is written to `game_summary.txt` in your output folder. A dated copy (like `game_summary_2026-10-09_193000.txt`) is saved next to it so the next game does not overwrite it. If you press New Game before ending, the dock asks if you want to end the game first.
 - **Fixing the last game:** **Reopen Last Game...** undoes End Game (the games played are taken off) so you can fix goals, assists, shots or anything else, then press End Game again. If you already pressed New Game, it also brings back that game's score, shots, faceoffs and player and goalie numbers, and drops anything done since. This is remembered even after OBS is closed.
 
 ## Hotkeys
@@ -206,7 +205,7 @@ All 45 hotkeys are prefixed with "Streamn:" in OBS Settings > Hotkeys:
 | Hotkey | Action |
 |--------|--------|
 | Clock Start/Stop | Toggle game clock |
-| Clock Reset | Reset clock to the length of the current period |
+| Clock Reset | Reset clock to period length |
 | Clock +1 Min / -1 Min | Adjust clock by 1 minute |
 | Clock +1 Sec / -1 Sec | Adjust clock by 1 second |
 | Home/Away Goal +/- | Adjust score (4 hotkeys) |

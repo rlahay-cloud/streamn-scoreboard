@@ -74,7 +74,7 @@ static void test_write_all_files(void)
 	snprintf(path, sizeof(path), "%s/clock.txt", g_tmp_dir);
 	char *content = read_file_content(path);
 	assert(content != NULL);
-	assert(strcmp(content, "10:00") == 0);
+	assert(strcmp(content, "15:00") == 0);
 	free(content);
 
 	snprintf(path, sizeof(path), "%s/period.txt", g_tmp_dir);
@@ -817,14 +817,13 @@ static void test_read_all_files_large_file(void)
 
 static void test_read_all_files_period_length(void)
 {
-	/* period_length.txt overrides the sport-set period_length (for a
-	   sport where the periods share one length) */
+	/* period_length.txt overrides the sport-set period_length */
 	scoreboard_reset_state_for_tests();
-	scoreboard_set_sport(SCOREBOARD_SPORT_FOOTBALL);
 	setup_tmp_dir();
 	scoreboard_set_output_directory(g_tmp_dir);
 
-	assert(scoreboard_get_period_length() == 1800);
+	/* Default hockey period_length is 900 (15 min) */
+	assert(scoreboard_get_period_length() == 900);
 
 	write_file(g_tmp_dir, "clock.txt", "12:00");
 	write_file(g_tmp_dir, "period.txt", "1");
@@ -845,111 +844,6 @@ static void test_read_all_files_period_length(void)
 	assert(scoreboard_clock_get_tenths() == 7200); /* 12:00 */
 	assert(scoreboard_get_period_length() == 720); /* 12 min */
 
-	cleanup_tmp_dir();
-}
-
-static void test_read_all_files_period_length_ignored_in_hockey(void)
-{
-	/* Hockey periods have their own lengths, so an old period_length.txt
-	   (such as 900 from an earlier version) cannot undo 10, 10 and 12. */
-	scoreboard_reset_state_for_tests();
-	setup_tmp_dir();
-	scoreboard_set_output_directory(g_tmp_dir);
-	write_file(g_tmp_dir, "clock.txt", "10:00");
-	write_file(g_tmp_dir, "period.txt", "1");
-	write_file(g_tmp_dir, "home_name.txt", "A");
-	write_file(g_tmp_dir, "away_name.txt", "B");
-	write_file(g_tmp_dir, "home_score.txt", "0");
-	write_file(g_tmp_dir, "away_score.txt", "0");
-	write_file(g_tmp_dir, "home_shots.txt", "0");
-	write_file(g_tmp_dir, "away_shots.txt", "0");
-	write_file(g_tmp_dir, "home_penalty_numbers.txt", "");
-	write_file(g_tmp_dir, "home_penalty_times.txt", "");
-	write_file(g_tmp_dir, "away_penalty_numbers.txt", "");
-	write_file(g_tmp_dir, "away_penalty_times.txt", "");
-	write_file(g_tmp_dir, "period_length.txt", "900");
-	assert(scoreboard_read_all_files());
-	assert(scoreboard_get_period_length() == 600);
-	assert(scoreboard_get_period_length_for(3) == 720);
-
-	/* what is written is the length of the period being played */
-	scoreboard_set_period(1); /* marks the state as changed */
-	assert(scoreboard_write_all_files());
-	char path[512];
-	snprintf(path, sizeof(path), "%s/period_length.txt", g_tmp_dir);
-	char *content = read_file_content(path);
-	assert(content != NULL && strcmp(content, "600") == 0);
-	free(content);
-	scoreboard_period_advance();
-	scoreboard_period_advance();
-	assert(scoreboard_write_all_files());
-	content = read_file_content(path);
-	assert(content != NULL && strcmp(content, "720") == 0);
-	free(content);
-	cleanup_tmp_dir();
-}
-
-static void test_period_lengths_file_round_trip(void)
-{
-	/* the lengths typed in survive a restart (files are read back) */
-	scoreboard_reset_state_for_tests();
-	setup_tmp_dir();
-	scoreboard_set_output_directory(g_tmp_dir);
-	scoreboard_set_period_length_for(2, 900);
-	scoreboard_set_period_length_for(4, 420);
-	assert(scoreboard_write_all_files());
-	char path[512];
-	snprintf(path, sizeof(path), "%s/period_lengths.txt", g_tmp_dir);
-	char *content = read_file_content(path);
-	assert(content != NULL &&
-	       strcmp(content, "600,900,720,420,300,300,300") == 0);
-	free(content);
-
-	scoreboard_reset_state_for_tests();
-	scoreboard_set_output_directory(g_tmp_dir);
-	assert(scoreboard_read_all_files());
-	assert(scoreboard_get_period_length_for(1) == 600);
-	assert(scoreboard_get_period_length_for(2) == 900);
-	assert(scoreboard_get_period_length_for(3) == 720);
-	assert(scoreboard_get_period_length_for(4) == 420);
-	cleanup_tmp_dir();
-}
-
-static void test_state_keeps_period_lengths(void)
-{
-	scoreboard_reset_state_for_tests();
-	setup_tmp_dir();
-	char path[512];
-	snprintf(path, sizeof(path), "%s/state.json", g_tmp_dir);
-	scoreboard_set_period_length_for(2, 900);
-	assert(scoreboard_save_state(path));
-
-	scoreboard_reset_state_for_tests();
-	assert(scoreboard_get_period_length_for(2) == 600);
-	assert(scoreboard_load_state(path));
-	assert(scoreboard_get_period_length_for(1) == 600);
-	assert(scoreboard_get_period_length_for(2) == 900);
-	assert(scoreboard_get_period_length_for(3) == 720);
-	assert(scoreboard_get_period_length_for(4) == 300);
-
-	/* A save from before per-period lengths: every period uses the one
-	   saved length. */
-	char *json = read_file_content(path);
-	assert(json != NULL);
-	FILE *f = fopen(path, "w");
-	assert(f != NULL);
-	for (char *line = strtok(json, "\n"); line != NULL;
-	     line = strtok(NULL, "\n")) {
-		if (strstr(line, "period_lengths") == NULL)
-			fprintf(f, "%s\n", line);
-	}
-	fclose(f);
-	free(json);
-	scoreboard_reset_state_for_tests();
-	assert(scoreboard_load_state(path));
-	assert(scoreboard_get_period_length_for(1) == 900);
-	assert(scoreboard_get_period_length_for(2) == 900);
-	assert(scoreboard_get_period_length_for(3) == 900);
 	cleanup_tmp_dir();
 }
 
@@ -975,7 +869,7 @@ static void test_read_all_files_period_length_missing(void)
 
 	bool ok = scoreboard_read_all_files();
 	assert(ok);
-	assert(scoreboard_get_period_length() == 600); /* unchanged */
+	assert(scoreboard_get_period_length() == 900); /* unchanged */
 
 	cleanup_tmp_dir();
 }
@@ -1855,9 +1749,6 @@ int main(void)
 	test_read_all_files_large_file();
 	test_read_all_files_period_length();
 	test_read_all_files_period_length_missing();
-	test_read_all_files_period_length_ignored_in_hockey();
-	test_period_lengths_file_round_trip();
-	test_state_keeps_period_lengths();
 	test_write_read_round_trip();
 	test_reset_state_wipes_output_directory();
 	test_startup_sequence_simulation();
