@@ -46,6 +46,8 @@ static struct {
 	bool clock_running;
 	enum scoreboard_clock_direction clock_direction;
 	int period_length;
+	/* Per-period lengths in seconds (0 = use period_length). */
+	int period_seconds[SCOREBOARD_MAX_PERIOD_LABELS];
 
 	bool game_clock_enabled;
 	int game_clock_accumulated_tenths;
@@ -203,6 +205,8 @@ static void log_message(enum scoreboard_log_level level, const char *msg)
 }
 
 static void generate_default_period_labels(void);
+static int period_length_for(int period);
+static void apply_default_period_lengths(void);
 
 static bool read_text_file(const char *dir, const char *filename, char *buf,
 			   size_t buf_size)
@@ -516,6 +520,8 @@ void scoreboard_reset_state_for_tests(void)
 	safe_copy(g_state.strength_label_format, kDefaultStrengthLabelFormat,
 		  sizeof(g_state.strength_label_format));
 	generate_default_period_labels();
+	apply_default_period_lengths();
+	g_state.clock_tenths = period_length_for(1) * 10;
 }
 
 /* ---- player roster and plus/minus ---- */
@@ -2125,9 +2131,11 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 	snprintf(line, sizeof(line), "%s %d - %d %s", g_state.home_name,
 		 g_state.home_score, g_state.away_score, g_state.away_name);
 	append_line(buf, size, &len, line);
-	scoreboard_format_period(tmp, sizeof(tmp));
-	snprintf(line, sizeof(line), "Period: %s", tmp);
-	append_line(buf, size, &len, line);
+	if (g_state.period > g_state.segment_count) {
+		scoreboard_format_period(tmp, sizeof(tmp));
+		snprintf(line, sizeof(line), "Period: %s", tmp);
+		append_line(buf, size, &len, line);
+	}
 	snprintf(line, sizeof(line), "Shots: %s %d, %s %d", g_state.home_name,
 		 g_state.home_shots, g_state.away_name, g_state.away_shots);
 	append_line(buf, size, &len, line);
@@ -2501,7 +2509,7 @@ void scoreboard_clock_reset(void)
 {
 	g_state.clock_running = false;
 	if (g_state.clock_direction == SCOREBOARD_CLOCK_COUNT_DOWN)
-		g_state.clock_tenths = g_state.period_length * 10;
+		g_state.clock_tenths = period_length_for(g_state.period) * 10;
 	else
 		g_state.clock_tenths = 0;
 	mark_dirty();
@@ -2521,7 +2529,7 @@ void scoreboard_clock_tick(int elapsed_tenths)
 		}
 	} else {
 		g_state.clock_tenths += elapsed_tenths;
-		int max_tenths = g_state.period_length * 10;
+		int max_tenths = period_length_for(g_state.period) * 10;
 		if (g_state.clock_tenths >= max_tenths) {
 			g_state.clock_tenths = max_tenths;
 			g_state.clock_running = false;
@@ -2599,17 +2607,98 @@ enum scoreboard_clock_direction scoreboard_get_clock_direction(void)
 	return g_state.clock_direction;
 }
 
+/* The length of one period: its own length when it has one, otherwise the
+   general period_length. */
+static int period_length_for(int period)
+{
+	if (period >= 1 && period <= SCOREBOARD_MAX_PERIOD_LABELS &&
+	    g_state.period_seconds[period - 1] > 0)
+		return g_state.period_seconds[period - 1];
+	return g_state.period_length;
+}
+
+/* Youth hockey: 10, 10 and 12 minute periods, 5 minute overtime. */
+static void apply_default_period_lengths(void)
+{
+	static const int k_hockey_periods[3] = {600, 600, 720};
+	memset(g_state.period_seconds, 0, sizeof(g_state.period_seconds));
+	if (g_state.sport != SCOREBOARD_SPORT_HOCKEY)
+		return;
+	for (int i = 0; i < g_state.segment_count && i < 3; i++)
+		g_state.period_seconds[i] = k_hockey_periods[i];
+	for (int i = g_state.segment_count;
+	     i < g_state.segment_count + g_state.ot_max &&
+	     i < SCOREBOARD_MAX_PERIOD_LABELS;
+	     i++)
+		g_state.period_seconds[i] = 300;
+}
+
+/* One length for every period. */
 void scoreboard_set_period_length(int seconds)
 {
 	if (seconds < 1)
 		seconds = 1;
 	g_state.period_length = seconds;
+	memset(g_state.period_seconds, 0, sizeof(g_state.period_seconds));
 	mark_dirty();
 }
 
+/* The length of the period being played. */
 int scoreboard_get_period_length(void)
 {
-	return g_state.period_length;
+	return period_length_for(g_state.period);
+}
+
+void scoreboard_set_period_length_for(int period, int seconds)
+{
+	if (period < 1 || period > SCOREBOARD_MAX_PERIOD_LABELS)
+		return;
+	if (seconds < 1)
+		seconds = 1;
+	g_state.period_seconds[period - 1] = seconds;
+	mark_dirty();
+}
+
+int scoreboard_get_period_length_for(int period)
+{
+	return period_length_for(period);
+}
+
+void scoreboard_period_lengths_to_string(char *buf, size_t size)
+{
+	if (buf == NULL || size == 0)
+		return;
+	buf[0] = '\0';
+	size_t len = 0;
+	for (int i = 0; i < g_state.period_label_count; i++) {
+		int n = snprintf(buf + len, size - len, "%s%d", i > 0 ? "," : "",
+				 period_length_for(i + 1));
+		if (n < 0 || (size_t)n >= size - len)
+			break;
+		len += (size_t)n;
+	}
+}
+
+bool scoreboard_period_lengths_from_string(const char *text)
+{
+	if (text == NULL)
+		return false;
+	bool any = false;
+	const char *p = text;
+	for (int i = 0; i < SCOREBOARD_MAX_PERIOD_LABELS && *p != '\0'; i++) {
+		char *end = NULL;
+		long v = strtol(p, &end, 10);
+		if (end == p)
+			break;
+		if (v > 0 && v < 86400) {
+			g_state.period_seconds[i] = (int)v;
+			any = true;
+		}
+		p = (*end == ',') ? end + 1 : end;
+	}
+	if (any)
+		mark_dirty();
+	return any;
 }
 
 /* ---- game clock (cumulative) ---- */
@@ -2622,7 +2711,7 @@ static int current_period_elapsed_tenths(void)
 	   tenths causes a 1-second drift (GitHub #16). */
 	int displayed_seconds = g_state.clock_tenths / 10;
 	if (g_state.clock_direction == SCOREBOARD_CLOCK_COUNT_DOWN)
-		return (g_state.period_length - displayed_seconds) * 10;
+		return (period_length_for(g_state.period) - displayed_seconds) * 10;
 	return displayed_seconds * 10;
 }
 
@@ -2715,7 +2804,7 @@ void scoreboard_period_rewind(void)
 	if (g_state.period > 1) {
 		if (g_state.game_clock_enabled && g_state.game_clock_started) {
 			g_state.game_clock_accumulated_tenths -=
-				g_state.period_length * 10;
+				period_length_for(g_state.period - 1) * 10;
 			if (g_state.game_clock_accumulated_tenths < 0)
 				g_state.game_clock_accumulated_tenths = 0;
 		}
@@ -3942,8 +4031,18 @@ bool scoreboard_write_all_files(void)
 		     ok;
 	}
 
-	snprintf(buf, sizeof(buf), "%d", g_state.period_length);
+	snprintf(buf, sizeof(buf), "%d", period_length_for(g_state.period));
 	ok = write_text_file(dir, "period_length.txt", buf) && ok;
+
+	{
+		/* Every period's own length, so a restart keeps 10, 10, 12 (or
+		   whatever was typed in). */
+		char lengths_buf[256];
+		scoreboard_period_lengths_to_string(lengths_buf,
+						    sizeof(lengths_buf));
+		ok = write_text_file(dir, "period_lengths.txt", lengths_buf) &&
+		     ok;
+	}
 
 	if (g_state.game_clock_enabled) {
 		char gc_buf[32];
@@ -4128,10 +4227,18 @@ bool scoreboard_read_all_files(void)
 
 	/* Period length file is optional — overrides sport-set period_length */
 	if (read_text_file(dir, "period_length.txt", buf, sizeof(buf))) {
+		/* Only sets the general length: a period that has its own length
+		   (hockey) keeps it, so an old file cannot undo 10, 10 and 12. */
 		int val = atoi(buf);
-		if (val > 0)
+		if (val > 0 && g_state.period >= 1 &&
+		    g_state.period <= SCOREBOARD_MAX_PERIOD_LABELS &&
+		    g_state.period_seconds[g_state.period - 1] == 0)
 			g_state.period_length = val;
 	}
+
+	/* Each period's own length (optional, written by this version) */
+	if (read_text_file(dir, "period_lengths.txt", buf, sizeof(buf)))
+		scoreboard_period_lengths_from_string(buf);
 
 	/* Cumulative clock file is optional — restores game clock state.
 	   Must come after clock.txt and period_length.txt since we need
@@ -4170,6 +4277,11 @@ bool scoreboard_save_state(const char *path)
 	fprintf(f, "  \"clock_direction\": %d,\n",
 		(int)g_state.clock_direction);
 	fprintf(f, "  \"period_length\": %d,\n", g_state.period_length);
+	{
+		char lengths[256];
+		scoreboard_period_lengths_to_string(lengths, sizeof(lengths));
+		write_json_string(f, "period_lengths", lengths, false);
+	}
 	fprintf(f, "  \"period\": %d,\n", g_state.period);
 	fprintf(f, "  \"overtime_enabled\": %s,\n",
 		g_state.overtime_enabled ? "true" : "false");
@@ -4334,6 +4446,15 @@ bool scoreboard_load_state(const char *path)
 		json, "clock_direction", (int)g_state.clock_direction);
 	g_state.period_length =
 		parse_json_int(json, "period_length", g_state.period_length);
+	{
+		/* A save from before per-period lengths has none: every period
+		   then uses the one saved length. */
+		char lengths[256];
+		parse_json_string(json, "period_lengths", lengths,
+				  sizeof(lengths));
+		memset(g_state.period_seconds, 0, sizeof(g_state.period_seconds));
+		scoreboard_period_lengths_from_string(lengths);
+	}
 	g_state.period = parse_json_int(json, "period", g_state.period);
 	g_state.overtime_enabled = parse_json_bool(json, "overtime_enabled",
 						   g_state.overtime_enabled);
@@ -4591,7 +4712,7 @@ void scoreboard_new_game(void)
 	g_state.game_clock_started = false;
 
 	if (g_state.clock_direction == SCOREBOARD_CLOCK_COUNT_DOWN)
-		g_state.clock_tenths = g_state.period_length * 10;
+		g_state.clock_tenths = period_length_for(g_state.period) * 10;
 	else
 		g_state.clock_tenths = 0;
 	mark_dirty();
@@ -4633,6 +4754,7 @@ void scoreboard_set_sport(enum scoreboard_sport sport)
 	if (sport < 0 || sport >= SCOREBOARD_SPORT_COUNT)
 		sport = SCOREBOARD_SPORT_HOCKEY;
 	const struct scoreboard_sport_preset *p = &k_sport_presets[sport];
+	const bool sport_changed = g_state.sport != sport;
 	g_state.sport = sport;
 	safe_copy(g_state.segment_name, p->segment_name,
 		  sizeof(g_state.segment_name));
@@ -4660,6 +4782,9 @@ void scoreboard_set_sport(enum scoreboard_sport sport)
 	g_state.base_strength = p->base_strength;
 	g_state.min_strength = p->min_strength;
 	generate_default_period_labels();
+	/* Picking the same sport again keeps the lengths that were typed in. */
+	if (sport_changed)
+		apply_default_period_lengths();
 	mark_dirty();
 }
 

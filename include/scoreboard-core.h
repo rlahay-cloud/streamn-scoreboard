@@ -90,6 +90,12 @@ void scoreboard_set_clock_direction(enum scoreboard_clock_direction dir);
 enum scoreboard_clock_direction scoreboard_get_clock_direction(void);
 void scoreboard_set_period_length(int seconds);
 int scoreboard_get_period_length(void);
+/* Each period can have its own length (hockey: 10, 10 and 12 minutes). */
+void scoreboard_set_period_length_for(int period, int seconds);
+int scoreboard_get_period_length_for(int period);
+/* "600,600,720,300": one length per period, in seconds. */
+void scoreboard_period_lengths_to_string(char *buf, size_t size);
+bool scoreboard_period_lengths_from_string(const char *text);
 
 /* Game clock (cumulative, counts up across all periods) */
 void scoreboard_set_game_clock_enabled(bool enabled);

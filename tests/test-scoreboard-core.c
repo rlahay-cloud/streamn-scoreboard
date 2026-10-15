@@ -69,7 +69,7 @@ static void test_clock_tick_countdown(void)
 	assert(scoreboard_get_clock_direction() == SCOREBOARD_CLOCK_COUNT_DOWN);
 
 	int initial = scoreboard_clock_get_tenths();
-	assert(initial == 900 * 10);
+	assert(initial == 600 * 10); /* hockey period 1 is 10 minutes */
 
 	scoreboard_clock_start();
 	scoreboard_clock_tick(10);
@@ -213,7 +213,7 @@ static void test_clock_direction(void)
 static void test_period_length(void)
 {
 	scoreboard_reset_state_for_tests();
-	assert(scoreboard_get_period_length() == 900);
+	assert(scoreboard_get_period_length() == 600); /* period 1 */
 	scoreboard_set_period_length(1200);
 	assert(scoreboard_get_period_length() == 1200);
 }
@@ -1090,12 +1090,136 @@ static void test_game_clock_format_mmss_over_hour(void)
 	assert(strcmp(buf, "61:33") == 0);
 }
 
+
+static void test_default_period_lengths_10_10_12(void)
+{
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_get_period_length_for(1) == 600);
+	assert(scoreboard_get_period_length_for(2) == 600);
+	assert(scoreboard_get_period_length_for(3) == 720);
+	assert(scoreboard_get_period_length_for(4) == 300); /* overtime */
+	assert(scoreboard_get_period_length_for(5) == 300);
+	assert(scoreboard_clock_get_tenths() == 6000);
+
+	scoreboard_period_advance();
+	assert(scoreboard_get_period() == 2);
+	assert(scoreboard_clock_get_tenths() == 6000);
+	scoreboard_period_advance();
+	assert(scoreboard_get_period() == 3);
+	assert(scoreboard_clock_get_tenths() == 7200);
+	assert(scoreboard_get_period_length() == 720);
+	scoreboard_period_advance();
+	assert(scoreboard_get_period() == 4); /* OT */
+	assert(scoreboard_clock_get_tenths() == 3000);
+	scoreboard_period_rewind();
+	assert(scoreboard_clock_get_tenths() == 7200);
+	scoreboard_clock_reset();
+	assert(scoreboard_clock_get_tenths() == 7200);
+}
+
+static void test_period_length_for_edit(void)
+{
+	scoreboard_reset_state_for_tests();
+	scoreboard_set_period_length_for(2, 900);
+	assert(scoreboard_get_period_length_for(2) == 900);
+	assert(scoreboard_get_period_length_for(1) == 600);
+	scoreboard_period_advance();
+	assert(scoreboard_clock_get_tenths() == 9000);
+
+	/* out of range periods are ignored, tiny values become 1 second */
+	scoreboard_set_period_length_for(0, 123);
+	scoreboard_set_period_length_for(99, 123);
+	scoreboard_set_period_length_for(1, 0);
+	assert(scoreboard_get_period_length_for(1) == 1);
+	assert(scoreboard_get_period_length_for(0) == 900); /* general length */
+	assert(scoreboard_get_period_length_for(99) == 900);
+	scoreboard_set_period_length_for(1, 600);
+
+	char buf[128];
+	scoreboard_period_lengths_to_string(buf, sizeof(buf));
+	assert(strcmp(buf, "600,900,720,300,300,300,300") == 0);
+	scoreboard_period_lengths_to_string(buf, 6); /* too small: cut off cleanly */
+	assert(strlen(buf) < 6);
+	scoreboard_period_lengths_to_string(NULL, 10);
+	scoreboard_period_lengths_to_string(buf, 0);
+
+	/* round trip, and bad text changes nothing */
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_period_lengths_from_string("500,550,650"));
+	assert(scoreboard_get_period_length_for(1) == 500);
+	assert(scoreboard_get_period_length_for(2) == 550);
+	assert(scoreboard_get_period_length_for(3) == 650);
+	assert(scoreboard_get_period_length_for(4) == 300);
+	assert(!scoreboard_period_lengths_from_string(NULL));
+	assert(!scoreboard_period_lengths_from_string(""));
+	assert(!scoreboard_period_lengths_from_string("abc"));
+	assert(!scoreboard_period_lengths_from_string("0,-5"));
+	assert(scoreboard_get_period_length_for(1) == 500);
+	/* a zero in the middle is skipped, the rest still count */
+	assert(scoreboard_period_lengths_from_string("0,700"));
+	assert(scoreboard_get_period_length_for(1) == 500);
+	assert(scoreboard_get_period_length_for(2) == 700);
+	/* more numbers than periods are ignored */
+	assert(scoreboard_period_lengths_from_string(
+		"1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18"));
+	assert(scoreboard_get_period_length_for(16) == 16);
+
+	/* one length for every period replaces the individual ones */
+	scoreboard_set_period_length(1200);
+	assert(scoreboard_get_period_length_for(1) == 1200);
+	assert(scoreboard_get_period_length_for(3) == 1200);
+	assert(scoreboard_get_period_length_for(5) == 1200);
+}
+
+static void test_period_lengths_with_clock_and_sports(void)
+{
+	/* a count-up clock stops at the length of the period being played */
+	scoreboard_reset_state_for_tests();
+	scoreboard_set_clock_direction(SCOREBOARD_CLOCK_COUNT_UP);
+	scoreboard_clock_reset();
+	assert(scoreboard_clock_get_tenths() == 0);
+	scoreboard_clock_start();
+	scoreboard_clock_tick(100000);
+	assert(scoreboard_clock_get_tenths() == 6000);
+	assert(!scoreboard_clock_is_running());
+
+	/* the cumulative game clock adds up the real length of each period */
+	scoreboard_reset_state_for_tests();
+	scoreboard_set_game_clock_enabled(true);
+	scoreboard_clock_start();
+	scoreboard_clock_tick(6000); /* all of period 1 */
+	scoreboard_period_advance();
+	assert(scoreboard_game_clock_get_tenths() == 6000);
+	scoreboard_clock_start();
+	scoreboard_clock_tick(6000); /* all of period 2 */
+	scoreboard_period_advance();
+	assert(scoreboard_game_clock_get_tenths() == 12000);
+	scoreboard_period_rewind(); /* back to period 2: takes off period 2 */
+	assert(scoreboard_game_clock_get_tenths() == 6000);
+
+	/* picking the same sport again keeps typed lengths; another sport
+	   uses its own, and hockey again goes back to 10, 10, 12 */
+	scoreboard_reset_state_for_tests();
+	scoreboard_set_period_length_for(1, 777);
+	scoreboard_set_sport(SCOREBOARD_SPORT_HOCKEY);
+	assert(scoreboard_get_period_length_for(1) == 777);
+	scoreboard_set_sport(SCOREBOARD_SPORT_BASKETBALL);
+	assert(scoreboard_get_period_length_for(1) == 480);
+	assert(scoreboard_get_period_length_for(5) == 480);
+	scoreboard_set_sport(SCOREBOARD_SPORT_HOCKEY);
+	assert(scoreboard_get_period_length_for(1) == 600);
+	assert(scoreboard_get_period_length_for(3) == 720);
+}
+
 int main(void)
 {
 	test_description();
 	test_lifecycle();
 	test_lifecycle_null_log();
 	test_clock_start_stop();
+	test_default_period_lengths_10_10_12();
+	test_period_length_for_edit();
+	test_period_lengths_with_clock_and_sports();
 	test_clock_tick_countdown();
 	test_clock_tick_countdown_floor();
 	test_clock_tick_countup();

@@ -134,14 +134,14 @@ static void test_set_sport_lacrosse(void)
 static void test_set_sport_generic(void)
 {
 	scoreboard_reset_state_for_tests();
-	int old_period_length = scoreboard_get_period_length();
 	scoreboard_set_sport(SCOREBOARD_SPORT_GENERIC);
 	assert(scoreboard_get_sport() == SCOREBOARD_SPORT_GENERIC);
 	assert(strcmp(scoreboard_get_segment_name(), "Segment") == 0);
 	assert(scoreboard_get_has_shots() == false);
 	assert(scoreboard_get_has_penalties() == false);
-	/* Generic has duration_seconds=0 so period_length should be unchanged */
-	assert(scoreboard_get_period_length() == old_period_length);
+	/* Generic has duration_seconds=0 so the general period length stays
+	   (the hockey 10, 10, 12 lengths are dropped) */
+	assert(scoreboard_get_period_length() == 900);
 	assert(scoreboard_get_clock_direction() == SCOREBOARD_CLOCK_COUNT_UP);
 }
 

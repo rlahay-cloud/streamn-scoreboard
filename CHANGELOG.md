@@ -6,7 +6,7 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 
 ### Added
 - Home player stats for hockey, kept in their own **Home Players** window opened from one **Player Stats / Roster...** button in the dock. The window shows the whole roster, two players per row, and stays open while you work. Only the home team is tracked.
-- After every goal, home or away, a window asks which players were on the ice and plus/minus is updated: +1 for a home goal, -1 for an away goal. Every box starts empty for each goal, and Skip changes nothing. For a home goal the window also asks who scored and who assisted, and ticks those players as on the ice for you. Roster menu items reopen the window for the last home or away goal to fix it later.
+- Roster menu items open a window for the last home or away goal where you can name who scored, who assisted and which players were on the ice (plus/minus: +1 for a home goal, -1 for an away goal). Every box starts empty, and Skip changes nothing.
 - No plus/minus is given for goals scored while any penalty is active on either team. This can be turned off from the Roster menu.
 - Game and season totals for plus/minus, goals, assists and points, with a Game / Season switch. New Game clears the game numbers and keeps the season numbers.
 - Click a player to type in exact game and season numbers.
@@ -34,6 +34,11 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 - **Goalie GAA** (goals against average, goals per full game of 32 minutes by default, changeable in the Roster menu) in the goalie lines, the goalie files, the Home Players window and the game summary files.
 - **Timestamp lead time** setting (default 7 seconds): goals and penalties are marked earlier in `timestamps.txt` so YouTube chapters start just before the play.
 - The Home Players window now fits the full names: the name column is as wide as the longest name, players switch to one per row when names are long.
+- **Goal buttons only change the score.** Pressing a goal button (or its hotkey) no longer opens a window, so nothing pops up on the OBS computer while you use the iPad. The old "Ask about each goal" menu item is gone.
+- **End Game is now a review screen.** It lists every player who is dressed with boxes for goals, assists, +/- and penalty minutes, plus each goalie's shots against and goals against. A line shows whether the goals entered match the home score, and the dock asks before ending if they do not. Untick Played for anyone who did not play. Nothing is saved until you press End Game.
+- **Period lengths are now 10, 10 and 12 minutes** for hockey, with 5 minute overtimes. Each period has its own box in **Game Settings** (Period lengths), so the defaults can be edited. The lengths are kept across OBS restarts in the new `period_lengths.txt` file. `period_length.txt` shows the length of the period being played.
+- **The game summary no longer has a Period line.** It only appears (for example `Period: OT`) when the game went to overtime.
+- The Home Players window now measures its widest row and opens at least that wide, so names are not cut off.
 - An away goal while the home team is short-handed ends the first home minor penalty (2 minutes removed, 4 minutes drops to 2, 2+2 moves on). Majors are not ended. Can be turned off.
 
 ## [0.8.0] - 2026-04-17

@@ -615,6 +615,8 @@ static void test_end_game_counts_games_and_writes_summary(void)
 
 	scoreboard_format_game_summary(buf, sizeof(buf));
 	assert(strstr(buf, "GAME SUMMARY\nKings 1 - 1 Rivals\n") == buf);
+	/* a game that ended in regulation has no period line */
+	assert(strstr(buf, "Period:") == NULL);
 	assert(strstr(buf, "Shots: Kings 2, Rivals 5") != NULL);
 	assert(strstr(buf, "Faceoffs won (Kings): 1/2 (50%)") != NULL);
 	assert(strstr(buf, "#10  1G 0A 1P  +/- 0  PIM 0") != NULL);
@@ -1481,6 +1483,21 @@ static void test_player_and_goalie_files(void)
 	cleanup_tmp_dir();
 }
 
+static void test_summary_period_only_in_overtime(void)
+{
+	char buf[8192];
+	scoreboard_reset_state_for_tests();
+	scoreboard_set_period(3);
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "Period:") == NULL);
+	scoreboard_set_period(4); /* the first overtime */
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "Period: OT\n") != NULL);
+	scoreboard_set_period(5);
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "Period: OT2\n") != NULL);
+}
+
 int main(void)
 {
 	test_goalie_roster();
@@ -1507,6 +1524,7 @@ int main(void)
 	test_deleting_a_penalty_takes_its_minutes_back();
 	test_deleting_a_penalty_after_reading_files_or_loading();
 	test_goalie_time_follows_manual_clock_changes();
+	test_summary_period_only_in_overtime();
 	test_todays_lineup();
 	test_lines();
 	test_backup_export_and_import();
