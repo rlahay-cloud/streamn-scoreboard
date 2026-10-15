@@ -995,6 +995,46 @@ void update_name_width()
 	g_roster_columns = width > 8 ? 1 : 2;
 }
 
+/* The font the player and goalie rows are drawn in (same as the style). */
+QFont roster_row_font()
+{
+	QFont font;
+	font.setFamilies({QStringLiteral("Menlo"), QStringLiteral("Consolas"),
+			  QStringLiteral("DejaVu Sans Mono"),
+			  QStringLiteral("Courier New")});
+	font.setStyleHint(QFont::Monospace);
+	font.setFixedPitch(true);
+	font.setPixelSize(13);
+	return font;
+}
+
+/* Width in pixels of the widest of these row texts, plus the button padding. */
+int widest_row_width(const QStringList &texts)
+{
+	const QFontMetrics fm(roster_row_font());
+	int width = 0;
+	for (const QString &text : texts)
+		width = qMax(width, fm.horizontalAdvance(text));
+	return width + 40;
+}
+
+int g_player_row_width = 0;
+int g_goalie_row_width = 0;
+
+/* Make the Home Players window at least as wide as its widest row, so no name
+   or number is ever cut off. It grows by itself when a longer name is typed. */
+void fit_stats_window()
+{
+	if (g_stats_dialog == nullptr)
+		return;
+	const int cols = g_roster_columns > 0 ? g_roster_columns : 1;
+	const int need = qMin(4000, qMax(cols * g_player_row_width + (cols - 1) * 2,
+					 g_goalie_row_width) + 30);
+	g_stats_dialog->setMinimumWidth(need);
+	if (g_stats_dialog->width() < need)
+		g_stats_dialog->resize(need, g_stats_dialog->height());
+}
+
 /* Combo box of roster players; the data of each item is the jersey number,
    -1 for "nobody". */
 QComboBox *make_player_combo(QWidget *parent)
@@ -1514,6 +1554,15 @@ void update_goalie_rows()
 		}
 	}
 	const bool season = show_season_stats();
+	{
+		QStringList texts;
+		for (int i = 0; i < count; i++)
+			texts << goalie_row_text(scoreboard_goalie_get(i), season);
+		g_goalie_row_width = widest_row_width(texts);
+		for (QPushButton *b : g_goalie_buttons)
+			b->setMinimumWidth(g_goalie_row_width);
+		fit_stats_window();
+	}
 	for (int i = 0; i < count && i < g_goalie_buttons.size(); i++)
 		g_goalie_buttons[i]->setText(
 			goalie_row_text(scoreboard_goalie_get(i), season));
@@ -2108,6 +2157,16 @@ void update_onice_team(onice_widgets &w)
 	}
 
 	const bool season = show_season_stats();
+	{
+		/* The widest row decides how wide every row (and the window) is. */
+		QStringList texts;
+		for (int i = 0; i < count; i++)
+			texts << player_row_text(scoreboard_roster_get(i), season);
+		g_player_row_width = widest_row_width(texts);
+		for (QPushButton *b : w.buttons)
+			b->setMinimumWidth(g_player_row_width);
+		fit_stats_window();
+	}
 	for (int i = 0; i < count && i < w.buttons.size(); i++) {
 		const struct scoreboard_player *p = scoreboard_roster_get(i);
 		w.buttons[i]->setText(player_row_text(p, season));
