@@ -287,6 +287,7 @@ void scoreboard_preview_strength_label(const char *fmt, char *buf,
 #define SCOREBOARD_MAX_ON_ICE 5
 #define SCOREBOARD_MAX_GOALIES 4
 
+#define SCOREBOARD_NAME_LEN 32
 struct scoreboard_player {
 	int number;
 	int plus_minus;
@@ -299,6 +300,7 @@ struct scoreboard_player {
 	int season_pim;
 	int games;      /* games finished with End Game that this player was in */
 	bool out;       /* not in today's lineup (see scoreboard_player_set_dressed) */
+	char name[SCOREBOARD_NAME_LEN]; /* optional, "" when not given */
 };
 
 /* Returns the roster slot, or -1 if the number is out of range or the roster
@@ -351,6 +353,31 @@ bool scoreboard_credit_goal(int scorer, int assist1, int assist2);
  * is called for a goal, nobody gets plus/minus for it. */
 bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
 				int count);
+/* The goals of this game still in the history (up to 16, oldest first, home
+ * and away mixed). The End Game review uses these to check every goal.
+ * Typing a score in directly forgets that team's earlier goals. */
+struct scoreboard_goal_event {
+	bool home_scored;
+	int scorer;   /* jersey numbers, -1 for nobody (home goals only) */
+	int assist1;
+	int assist2;
+	bool skipped; /* a penalty was active, so no +/- */
+	int on_ice_count;
+	int on_ice[SCOREBOARD_MAX_ON_ICE];
+};
+int scoreboard_goal_event_count(void);
+/* False if index is out of range. */
+bool scoreboard_goal_event_get(int index, struct scoreboard_goal_event *out);
+/* Replace who scored and assisted for one home goal. False, changing
+ * nothing, for an away goal, a bad index, a number not on the roster or a
+ * player named twice. */
+bool scoreboard_goal_event_set_credit(int index, int scorer, int assist1,
+				      int assist2);
+/* Replace who was on the ice for one goal (either team). False if index is
+ * out of range. Plus/minus moves with the answer, as for
+ * scoreboard_set_goal_on_ice. */
+bool scoreboard_goal_event_set_on_ice(int index, const int *numbers,
+				      int count);
 /* Copies the numbers last given for that goal into `numbers` (at most `max`)
  * and returns how many; 0 if none or no such goal. */
 int scoreboard_get_goal_on_ice(bool home_scored, int *numbers, int max);
@@ -465,7 +492,30 @@ struct scoreboard_goalie {
 	int toi_tenths;        /* time on ice (in net) this game, tenths of a second */
 	int season_toi_tenths;
 	bool played; /* was in net this game */
+	char name[SCOREBOARD_NAME_LEN]; /* optional, "" when not given */
 };
+
+/* ---- names and one stat file per player ---- */
+
+/* Names are optional (up to 31 bytes). Characters the saved text forms use
+ * as separators are turned into spaces. Returns false for a number that is
+ * not on the roster (or goalie list). The getters return "" when there is no
+ * name. Each player and goalie also gets their own text file, player_<n>.txt
+ * and goalie_<n>.txt, with a name line, a Game line and a Season line. */
+bool scoreboard_player_set_name(int number, const char *name);
+const char *scoreboard_player_get_name(int number);
+bool scoreboard_goalie_set_name(int number, const char *name);
+const char *scoreboard_goalie_get_name(int number);
+bool scoreboard_format_player_file(int number, char *buf, size_t size);
+bool scoreboard_format_goalie_file(int number, char *buf, size_t size);
+/* Goals against average: goals per game length in net ("-" before any
+ * time). The game length is a setting in minutes (1 to 120, default 32, the
+ * length of a game in this league; pro hockey uses 60). */
+#define SCOREBOARD_DEFAULT_GAA_MINUTES 32
+void scoreboard_set_gaa_minutes(int minutes);
+int scoreboard_get_gaa_minutes(void);
+void scoreboard_format_gaa(int goals_against, int toi_tenths, char *buf,
+			   size_t size);
 
 int scoreboard_goalie_add(int number);
 bool scoreboard_goalie_remove(int number);
