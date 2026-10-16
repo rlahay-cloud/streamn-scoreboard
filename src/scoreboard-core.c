@@ -1613,7 +1613,8 @@ static int latest_goal_event(bool home_scored)
 	return -1;
 }
 
-bool scoreboard_credit_goal(int scorer, int assist1, int assist2)
+/* Check that credit numbers are on the roster and not named twice. */
+static bool credit_numbers_valid(int scorer, int assist1, int assist2)
 {
 	int given[3] = {scorer, assist1, assist2};
 	for (int i = 0; i < 3; i++) {
@@ -1626,15 +1627,30 @@ bool scoreboard_credit_goal(int scorer, int assist1, int assist2)
 				return false;
 		}
 	}
-	int idx = latest_goal_event(true);
-	if (idx >= 0) {
-		struct pm_event *ev = &g_state.pm_events[idx];
-		credit_apply(ev->scorer, ev->assist1, ev->assist2, -1);
-		ev->scorer = scorer < 0 ? -1 : scorer;
-		ev->assist1 = assist1 < 0 ? -1 : assist1;
-		ev->assist2 = assist2 < 0 ? -1 : assist2;
-	}
+	return true;
+}
+
+/* Give the goal at history slot idx (a home goal) a new credit, taking the
+   old credit back first. */
+static void goal_credit_at(int idx, int scorer, int assist1, int assist2)
+{
+	struct pm_event *ev = &g_state.pm_events[idx];
+	credit_apply(ev->scorer, ev->assist1, ev->assist2, -1);
+	ev->scorer = scorer < 0 ? -1 : scorer;
+	ev->assist1 = assist1 < 0 ? -1 : assist1;
+	ev->assist2 = assist2 < 0 ? -1 : assist2;
 	credit_apply(scorer, assist1, assist2, 1);
+}
+
+bool scoreboard_credit_goal(int scorer, int assist1, int assist2)
+{
+	if (!credit_numbers_valid(scorer, assist1, assist2))
+		return false;
+	int idx = latest_goal_event(true);
+	if (idx >= 0)
+		goal_credit_at(idx, scorer, assist1, assist2);
+	else
+		credit_apply(scorer, assist1, assist2, 1);
 	mark_dirty();
 	return true;
 }
@@ -1653,14 +1669,12 @@ bool scoreboard_get_last_goal(int *scorer, int *assist1, int *assist2)
 	return false;
 }
 
-bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
-				int count)
+/* Name the on-ice players for the goal at history slot idx, replacing any
+   earlier answer. */
+static void goal_on_ice_at(int idx, const int *numbers, int count)
 {
-	int idx = latest_goal_event(home_scored);
-	if (idx < 0)
-		return false;
 	struct pm_event *ev = &g_state.pm_events[idx];
-	const int delta = home_scored ? 1 : -1;
+	const int delta = ev->home_scored ? 1 : -1;
 	for (int i = 0; i < ev->count; i++) {
 		struct scoreboard_player *p = roster_lookup(ev->numbers[i]);
 		if (p != NULL)
@@ -1690,6 +1704,58 @@ bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
 			scoreboard_add_action_log(msg);
 		}
 	}
+}
+
+bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
+				int count)
+{
+	int idx = latest_goal_event(home_scored);
+	if (idx < 0)
+		return false;
+	goal_on_ice_at(idx, numbers, count);
+	mark_dirty();
+	return true;
+}
+
+int scoreboard_goal_event_count(void)
+{
+	return g_state.pm_event_count;
+}
+
+bool scoreboard_goal_event_get(int index, struct scoreboard_goal_event *out)
+{
+	if (index < 0 || index >= g_state.pm_event_count)
+		return false;
+	const struct pm_event *ev = &g_state.pm_events[index];
+	out->home_scored = ev->home_scored;
+	out->scorer = ev->scorer;
+	out->assist1 = ev->assist1;
+	out->assist2 = ev->assist2;
+	out->skipped = ev->skipped;
+	out->on_ice_count = ev->count;
+	for (int i = 0; i < ev->count; i++)
+		out->on_ice[i] = ev->numbers[i];
+	return true;
+}
+
+bool scoreboard_goal_event_set_credit(int index, int scorer, int assist1,
+				      int assist2)
+{
+	if (index < 0 || index >= g_state.pm_event_count ||
+	    !g_state.pm_events[index].home_scored)
+		return false;
+	if (!credit_numbers_valid(scorer, assist1, assist2))
+		return false;
+	goal_credit_at(index, scorer, assist1, assist2);
+	mark_dirty();
+	return true;
+}
+
+bool scoreboard_goal_event_set_on_ice(int index, const int *numbers, int count)
+{
+	if (index < 0 || index >= g_state.pm_event_count)
+		return false;
+	goal_on_ice_at(index, numbers, count);
 	mark_dirty();
 	return true;
 }

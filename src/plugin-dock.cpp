@@ -11,6 +11,7 @@
 #include <dlfcn.h>
 #endif
 
+#include <cstring>
 #include <vector>
 
 #include <QtCore/QByteArray>
@@ -1057,8 +1058,19 @@ QComboBox *make_player_combo(QWidget *parent)
    the last goal). Skip changes nothing. Reopened for an earlier goal, the
    on-ice boxes show who was already named; scorer and assists left on
    "(nobody)" keep the credit that is already there. */
-void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
+void prompt_goal_credit(QWidget *parent, bool home, bool force = false,
+			int event_index = -1)
 {
+	/* event_index >= 0 is the End Game review: it edits that one goal from
+	   this game's history, shows what is already saved, and lets the
+	   credit be cleared. */
+	const bool review = event_index >= 0;
+	struct scoreboard_goal_event review_ev;
+	memset(&review_ev, 0, sizeof(review_ev));
+	if (review && !scoreboard_goal_event_get(event_index, &review_ev))
+		return;
+	if (review)
+		home = review_ev.home_scored;
 	if (!force && !g_ask_scorer)
 		return;
 	if (!is_hockey_now() || scoreboard_roster_count() == 0)
@@ -1066,7 +1078,12 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(
-		home ? QString("Goal for %1")
+		review ? QString("Goal %1: %2").arg(event_index + 1).arg(
+				 home ? QString("for %1").arg(QString::fromUtf8(
+						scoreboard_get_home_name()))
+				      : QString("against %1").arg(QString::fromUtf8(
+						scoreboard_get_home_name())))
+		: home ? QString("Goal for %1")
 			       .arg(QString::fromUtf8(scoreboard_get_home_name()))
 		     : QString("Goal against %1")
 			       .arg(QString::fromUtf8(scoreboard_get_home_name())));
@@ -1084,9 +1101,19 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 		form->addRow("Assist:", assist1);
 		form->addRow("Second assist:", assist2);
 		layout->addLayout(form);
+		if (review) {
+			const int ids[3] = {review_ev.scorer, review_ev.assist1,
+					    review_ev.assist2};
+			QComboBox *boxes[3] = {scorer, assist1, assist2};
+			for (int k = 0; k < 3; k++) {
+				const int at = boxes[k]->findData(ids[k]);
+				boxes[k]->setCurrentIndex(at >= 0 ? at : 0);
+			}
+		}
 	}
 
-	if (scoreboard_goal_has_no_plus_minus(home)) {
+	if (review ? review_ev.skipped
+		   : scoreboard_goal_has_no_plus_minus(home)) {
 		QLabel *note = new QLabel(
 			"A penalty is active, so this goal gives no +/-.",
 			&dialog);
@@ -1096,8 +1123,15 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 	QLabel *ice_label = new QLabel("Who was on the ice?", &dialog);
 	layout->addWidget(ice_label);
 	std::vector<int> already(SCOREBOARD_MAX_ROSTER);
-	const int already_count = scoreboard_get_goal_on_ice(
-		home, already.data(), SCOREBOARD_MAX_ROSTER);
+	int already_count = 0;
+	if (review) {
+		already_count = review_ev.on_ice_count;
+		for (int k = 0; k < already_count; k++)
+			already[k] = review_ev.on_ice[k];
+	} else {
+		already_count = scoreboard_get_goal_on_ice(
+			home, already.data(), SCOREBOARD_MAX_ROSTER);
+	}
 	QGridLayout *ice_grid = new QGridLayout();
 	QVector<QCheckBox *> ice_boxes;
 	const int count = scoreboard_roster_count();
@@ -1204,7 +1238,8 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 
 	QDialogButtonBox *buttons = new QDialogButtonBox(
 		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-	buttons->button(QDialogButtonBox::Cancel)->setText("Skip");
+	buttons->button(QDialogButtonBox::Cancel)
+		->setText(review ? "Cancel" : "Skip");
 	layout->addWidget(buttons);
 	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
 			 &QDialog::accept);
@@ -1218,8 +1253,12 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 			const int sc = scorer->currentData().toInt();
 			const int a1 = assist1->currentData().toInt();
 			const int a2 = assist2->currentData().toInt();
-			if ((sc >= 0 || a1 >= 0 || a2 >= 0) &&
-			    !scoreboard_credit_goal(sc, a1, a2)) {
+			const bool changed =
+				review ? scoreboard_goal_event_set_credit(
+						 event_index, sc, a1, a2)
+				       : (sc < 0 && a1 < 0 && a2 < 0) ||
+						 scoreboard_credit_goal(sc, a1, a2);
+			if (!changed) {
 				QMessageBox::warning(
 					&dialog, "Goal",
 					"Pick each player only once.");
@@ -1252,8 +1291,13 @@ void prompt_goal_credit(QWidget *parent, bool home, bool force = false)
 			if (box->isChecked())
 				on_ice.push_back(box->property("number").toInt());
 		}
-		scoreboard_set_goal_on_ice(home, on_ice.data(),
-					   (int)on_ice.size());
+		if (review)
+			scoreboard_goal_event_set_on_ice(event_index,
+							 on_ice.data(),
+							 (int)on_ice.size());
+		else
+			scoreboard_set_goal_on_ice(home, on_ice.data(),
+						   (int)on_ice.size());
 		break;
 	}
 	write_files_now();
@@ -1598,6 +1642,135 @@ void refresh_goalie_combo()
 	g_goalie_combo->setCurrentIndex(idx >= 0 ? idx : 0);
 }
 
+/* One line describing a goal from this game's history, for the End Game
+   review. */
+QString goal_review_text(int index)
+{
+	struct scoreboard_goal_event ev;
+	if (!scoreboard_goal_event_get(index, &ev))
+		return QString();
+	const QString team = QString::fromUtf8(scoreboard_get_home_name());
+	QString text = ev.home_scored ? QString("Goal %1, %2").arg(index + 1).arg(team)
+				      : QString("Goal %1, against %2")
+						.arg(index + 1)
+						.arg(team);
+	if (ev.home_scored) {
+		if (ev.scorer < 0) {
+			text += "\nScored by: NOT SET";
+		} else {
+			QStringList assists;
+			if (ev.assist1 >= 0)
+				assists << player_label(ev.assist1);
+			if (ev.assist2 >= 0)
+				assists << player_label(ev.assist2);
+			text += QString("\nScored by: %1   Assists: %2")
+					.arg(player_label(ev.scorer))
+					.arg(assists.isEmpty() ? QString("none")
+							       : assists.join(", "));
+		}
+	}
+	if (ev.skipped) {
+		text += "\nOn ice: no +/- (a penalty was active)";
+	} else if (ev.on_ice_count == 0) {
+		text += "\nOn ice: NOT SET";
+	} else {
+		QStringList ice;
+		for (int k = 0; k < ev.on_ice_count; k++)
+			ice << player_label(ev.on_ice[k]);
+		text += "\nOn ice: " + ice.join(", ");
+	}
+	return text;
+}
+
+/* End Game step 1: go through every goal of the game (who scored and
+   assisted on home goals, who was on the ice for home and away goals) and
+   fix anything wrong. Returns false if the person cancels. Hockey with a
+   roster only; otherwise there is nothing to review. */
+bool run_goal_review(QWidget *parent)
+{
+	if (!is_hockey_now() || scoreboard_roster_count() == 0)
+		return true;
+	const int total = scoreboard_goal_event_count();
+	if (total == 0 && scoreboard_get_home_score() == 0 &&
+	    scoreboard_get_away_score() == 0)
+		return true;
+
+	QDialog dialog(parent);
+	dialog.setWindowTitle("End Game: check the goals");
+	QVBoxLayout *layout = new QVBoxLayout(&dialog);
+	layout->addWidget(new QLabel(
+		QString("Final score: %1 %2 - %3 %4\nCheck who scored, who assisted and who was on the ice for each goal. Press Edit to fix one.")
+			.arg(QString::fromUtf8(scoreboard_get_home_name()))
+			.arg(scoreboard_get_home_score())
+			.arg(scoreboard_get_away_score())
+			.arg(QString::fromUtf8(scoreboard_get_away_name())),
+		&dialog));
+
+	int home_recorded = 0;
+	int away_recorded = 0;
+	for (int i = 0; i < total; i++) {
+		struct scoreboard_goal_event ev;
+		if (scoreboard_goal_event_get(i, &ev)) {
+			if (ev.home_scored)
+				home_recorded++;
+			else
+				away_recorded++;
+		}
+	}
+	if (home_recorded != scoreboard_get_home_score() ||
+	    away_recorded != scoreboard_get_away_score()) {
+		QLabel *warn = new QLabel(
+			QString("Only %1 of %2 home goals and %3 of %4 away goals are on record here (a score typed in by hand or more than 16 goals leaves some out). The goals below are all that can be checked.")
+				.arg(home_recorded)
+				.arg(scoreboard_get_home_score())
+				.arg(away_recorded)
+				.arg(scoreboard_get_away_score()),
+			&dialog);
+		warn->setWordWrap(true);
+		warn->setStyleSheet("color: #c77700;");
+		layout->addWidget(warn);
+	}
+
+	QScrollArea *scroll = new QScrollArea(&dialog);
+	scroll->setWidgetResizable(true);
+	QWidget *inner = new QWidget(scroll);
+	QVBoxLayout *rows = new QVBoxLayout(inner);
+	for (int i = 0; i < total; i++) {
+		QHBoxLayout *row = new QHBoxLayout();
+		QLabel *label = new QLabel(goal_review_text(i), inner);
+		label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		QPushButton *edit = new QPushButton("Edit...", inner);
+		row->addWidget(label, 1);
+		row->addWidget(edit, 0);
+		rows->addLayout(row);
+		QObject::connect(edit, &QPushButton::clicked, &dialog,
+				 [=, &dialog]() {
+			prompt_goal_credit(&dialog, true, true, i);
+			label->setText(goal_review_text(i));
+		});
+	}
+	if (total == 0) {
+		rows->addWidget(new QLabel(
+			"No goals are on record for this game, so there is nothing to check.",
+			inner));
+	}
+	rows->addStretch(1);
+	scroll->setWidget(inner);
+	scroll->setMinimumHeight(260);
+	layout->addWidget(scroll, 1);
+
+	QDialogButtonBox *buttons = new QDialogButtonBox(
+		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+	buttons->button(QDialogButtonBox::Ok)->setText("Goals are right, continue");
+	layout->addWidget(buttons);
+	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
+			 &QDialog::accept);
+	QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
+			 &QDialog::reject);
+	dialog.resize(560, 460);
+	return dialog.exec() == QDialog::Accepted;
+}
+
 /* Confirm, then end the game. Everyone in today's lineup gets a game played
    (change the lineup first if someone did not dress). Returns true if the
    game was ended. */
@@ -1609,6 +1782,8 @@ bool run_end_game_dialog(QWidget *parent)
 			"This game is already ended. Use Reopen Last Game if something needs fixing.");
 		return false;
 	}
+	if (!run_goal_review(parent))
+		return false;
 	std::vector<int> played;
 	QStringList names;
 	for (int i = 0; i < scoreboard_roster_count(); i++) {

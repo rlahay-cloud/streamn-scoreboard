@@ -353,6 +353,31 @@ bool scoreboard_credit_goal(int scorer, int assist1, int assist2);
  * is called for a goal, nobody gets plus/minus for it. */
 bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
 				int count);
+/* The goals of this game still in the history (up to 16, oldest first, home
+ * and away mixed). The End Game review uses these to check every goal.
+ * Typing a score in directly forgets that team's earlier goals. */
+struct scoreboard_goal_event {
+	bool home_scored;
+	int scorer;   /* jersey numbers, -1 for nobody (home goals only) */
+	int assist1;
+	int assist2;
+	bool skipped; /* a penalty was active, so no +/- */
+	int on_ice_count;
+	int on_ice[SCOREBOARD_MAX_ON_ICE];
+};
+int scoreboard_goal_event_count(void);
+/* False if index is out of range. */
+bool scoreboard_goal_event_get(int index, struct scoreboard_goal_event *out);
+/* Replace who scored and assisted for one home goal. False, changing
+ * nothing, for an away goal, a bad index, a number not on the roster or a
+ * player named twice. */
+bool scoreboard_goal_event_set_credit(int index, int scorer, int assist1,
+				      int assist2);
+/* Replace who was on the ice for one goal (either team). False if index is
+ * out of range. Plus/minus moves with the answer, as for
+ * scoreboard_set_goal_on_ice. */
+bool scoreboard_goal_event_set_on_ice(int index, const int *numbers,
+				      int count);
 /* Copies the numbers last given for that goal into `numbers` (at most `max`)
  * and returns how many; 0 if none or no such goal. */
 int scoreboard_get_goal_on_ice(bool home_scored, int *numbers, int max);

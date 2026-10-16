@@ -96,6 +96,62 @@ static void away_goal(const int *on_ice, int count)
 	scoreboard_set_goal_on_ice(false, on_ice, count);
 }
 
+/* ---- goal history, one goal at a time (End Game review) ---- */
+
+static void test_goal_events_review(void)
+{
+	setup_roster();
+	struct scoreboard_goal_event ev;
+	assert(scoreboard_goal_event_count() == 0);
+	assert(!scoreboard_goal_event_get(0, &ev));
+	assert(!scoreboard_goal_event_get(-1, &ev));
+	assert(!scoreboard_goal_event_set_credit(0, 10, -1, -1));
+	assert(!scoreboard_goal_event_set_on_ice(0, NULL, 0));
+
+	const int first[] = {10, 11};
+	home_goal(first, 2);
+	const int second[] = {12};
+	away_goal(second, 1);
+	const int third[] = {10};
+	home_goal(third, 1);
+	assert(scoreboard_goal_event_count() == 3);
+
+	assert(scoreboard_goal_event_get(0, &ev));
+	assert(ev.home_scored && ev.scorer == -1 && ev.on_ice_count == 2);
+	assert(ev.on_ice[0] == 10 && ev.on_ice[1] == 11 && !ev.skipped);
+	assert(scoreboard_goal_event_get(1, &ev));
+	assert(!ev.home_scored && ev.on_ice_count == 1 && ev.on_ice[0] == 12);
+
+	/* Credit the FIRST home goal (not the latest one). */
+	assert(scoreboard_goal_event_set_credit(0, 11, 10, -1));
+	assert(player(11)->goals == 1 && player(10)->assists == 1);
+	assert(player(10)->goals == 0);
+	/* Replacing the credit takes the old one back. */
+	assert(scoreboard_goal_event_set_credit(0, 12, -1, -1));
+	assert(player(11)->goals == 0 && player(10)->assists == 0);
+	assert(player(12)->goals == 1);
+	/* Bad credits change nothing. */
+	assert(!scoreboard_goal_event_set_credit(1, 10, -1, -1));
+	assert(!scoreboard_goal_event_set_credit(0, 99, -1, -1));
+	assert(!scoreboard_goal_event_set_credit(0, 10, 10, -1));
+	assert(!scoreboard_goal_event_set_credit(3, 10, -1, -1));
+	assert(player(12)->goals == 1);
+
+	/* Change who was on the ice for the away goal: -1 moves with it. */
+	assert(player(12)->plus_minus == -1);
+	const int fixed[] = {10, 11};
+	assert(scoreboard_goal_event_set_on_ice(1, fixed, 2));
+	assert(player(12)->plus_minus == 0);
+	assert(player(11)->plus_minus == 0); /* +1 from goal 1, -1 now */
+	assert(!scoreboard_goal_event_set_on_ice(9, fixed, 2));
+	assert(scoreboard_goal_event_get(1, &ev));
+	assert(ev.on_ice_count == 2);
+
+	/* Taking the first home goal back still reverses the later edits. */
+	scoreboard_decrement_home_score();
+	assert(scoreboard_goal_event_count() == 2);
+}
+
 /* ---- roster ---- */
 
 static void test_roster_add_get_remove_clear(void)
@@ -954,6 +1010,7 @@ int main(void)
 	test_removing_goal_never_goes_below_zero();
 	test_credit_goal_without_recorded_goal();
 	test_last_goal_and_format();
+	test_goal_events_review();
 
 	test_format_plus_minus_values();
 	test_plus_minus_lines();
