@@ -15,6 +15,11 @@
 #define SCOREBOARD_PENALTY_SLOTS SCOREBOARD_MAX_PENALTIES
 #define SCOREBOARD_SEGMENT_NAME_SIZE 16
 #define SCOREBOARD_PM_EVENT_CAPACITY 16
+/* Recent home shots, so taking a shot away also takes it off the player it
+   was given to. */
+#define SCOREBOARD_SHOT_LOG_CAPACITY 64
+#define SHOT_LOG_UNASSIGNED (-1)
+#define SHOT_LOG_GOAL (-2)
 #define SCOREBOARD_MAJOR_SECS 300
 
 /* One goal's plus/minus awards, kept so a goal that is taken back can be
@@ -101,6 +106,8 @@ static struct {
 	bool pm_skip_power_play;
 	struct pm_event pm_events[SCOREBOARD_PM_EVENT_CAPACITY];
 	int pm_event_count;
+	int shot_log[SCOREBOARD_SHOT_LOG_CAPACITY];
+	int shot_log_count;
 
 	struct scoreboard_goalie goalies[SCOREBOARD_MAX_GOALIES];
 	int goalie_count;
@@ -144,6 +151,8 @@ static struct {
 	int goalie_in_net;
 	struct pm_event pm_events[SCOREBOARD_PM_EVENT_CAPACITY];
 	int pm_event_count;
+	int shot_log[SCOREBOARD_SHOT_LOG_CAPACITY];
+	int shot_log_count;
 	bool game_ended;
 	int ended_players[SCOREBOARD_MAX_ROSTER];
 	int ended_player_count;
@@ -620,6 +629,7 @@ void scoreboard_roster_clear(void)
 {
 	g_state.home_roster_count = 0;
 	g_state.pm_event_count = 0;
+	g_state.shot_log_count = 0;
 	mark_dirty();
 }
 
@@ -721,13 +731,14 @@ bool scoreboard_format_player_file(int number, char *buf, size_t size)
 				     sizeof(season_pm));
 	snprintf(buf, size,
 		 "#%d%s%s\n"
-		 "Game: %s +/- | %dG %dA %dP | %d PIM\n"
-		 "Season: %d GP | %s +/- | %dG %dA %dP | %.2f PPG | %d PIM\n",
+		 "Game: %s +/- | %dG %dA %dP | %d PIM | %d SOG\n"
+		 "Season: %d GP | %s +/- | %dG %dA %dP | %.2f PPG | %d PIM | %d SOG\n",
 		 p->number, p->name[0] != '\0' ? " " : "", p->name, pm,
-		 p->goals, p->assists, p->goals + p->assists, p->pim, p->games,
+		 p->goals, p->assists, p->goals + p->assists, p->pim, p->sog, p->games,
 		 season_pm, p->season_goals, p->season_assists,
 		 p->season_goals + p->season_assists,
-		 scoreboard_player_get_ppg(p->number), p->season_pim);
+		 scoreboard_player_get_ppg(p->number), p->season_pim,
+		 p->season_sog);
 	return true;
 }
 
@@ -1309,6 +1320,40 @@ bool scoreboard_player_set_assists(int number, int assists)
 	return true;
 }
 
+bool scoreboard_player_set_sog(int number, int sog)
+{
+	struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	int value = clamp_zero(sog);
+	p->season_sog = clamp_zero(p->season_sog + value - p->sog);
+	p->sog = value;
+	mark_dirty();
+	return true;
+}
+
+bool scoreboard_player_set_season_sog(int number, int sog)
+{
+	struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	p->season_sog = clamp_zero(sog);
+	mark_dirty();
+	return true;
+}
+
+int scoreboard_player_get_sog(int number)
+{
+	const struct scoreboard_player *p = roster_lookup(number);
+	return p != NULL ? p->sog : 0;
+}
+
+int scoreboard_player_get_season_sog(int number)
+{
+	const struct scoreboard_player *p = roster_lookup(number);
+	return p != NULL ? p->season_sog : 0;
+}
+
 bool scoreboard_player_set_season(int number, int plus_minus, int goals,
 				  int assists)
 {
@@ -1348,6 +1393,7 @@ void scoreboard_roster_reset_game_stats(void)
 		g_state.home_roster[i].goals = 0;
 		g_state.home_roster[i].assists = 0;
 		g_state.home_roster[i].pim = 0;
+		g_state.home_roster[i].sog = 0;
 	}
 	for (int i = 0; i < g_state.goalie_count; i++) {
 		g_state.goalies[i].shots_against = 0;
@@ -1357,6 +1403,7 @@ void scoreboard_roster_reset_game_stats(void)
 	}
 	/* Recorded goal awards no longer match the totals. */
 	g_state.pm_event_count = 0;
+	g_state.shot_log_count = 0;
 	mark_dirty();
 }
 
@@ -1367,6 +1414,7 @@ void scoreboard_roster_reset_season_stats(void)
 		g_state.home_roster[i].season_goals = 0;
 		g_state.home_roster[i].season_assists = 0;
 		g_state.home_roster[i].season_pim = 0;
+		g_state.home_roster[i].season_sog = 0;
 		g_state.home_roster[i].games = 0;
 	}
 	for (int i = 0; i < g_state.goalie_count; i++) {
@@ -1468,11 +1516,11 @@ static void roster_array_to_string(const struct scoreboard_player *roster,
 		/* The second slot used to hold an on-ice flag. It is always 0
 		   now but kept so older and newer saves read the same way. */
 		snprintf(item, sizeof(item),
-			 "%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d", p->number, 0,
+			 "%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d", p->number, 0,
 			 p->plus_minus, p->goals, p->assists,
 			 p->season_plus_minus, p->season_goals,
 			 p->season_assists, p->pim, p->season_pim, p->games,
-			 p->out ? 1 : 0);
+			 p->out ? 1 : 0, p->sog, p->season_sog);
 		if (p->name[0] != '\0')
 			snprintf(item + strlen(item), sizeof(item) - strlen(item),
 				 "=%s", p->name);
@@ -1497,6 +1545,7 @@ void scoreboard_roster_from_string(const char *text)
 {
 	g_state.home_roster_count = 0;
 	g_state.pm_event_count = 0;
+	g_state.shot_log_count = 0;
 	mark_dirty();
 	if (text == NULL)
 		return;
@@ -1507,11 +1556,11 @@ void scoreboard_roster_from_string(const char *text)
 		/* (unused slot), +/-, goals, assists, then season +/-, goals,
 		   assists.
 		   Older saves have fewer fields. */
-		long fields[11] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+		long fields[13] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 		int read = 0;
 		bool readable = (end != p);
 		p = end;
-		for (; read < 11 && readable && *p == ':'; read++) {
+		for (; read < 13 && readable && *p == ':'; read++) {
 			fields[read] = strtol(p + 1, &end, 10);
 			p = end;
 		}
@@ -1553,6 +1602,10 @@ void scoreboard_roster_from_string(const char *text)
 					player->games = clamp_zero((int)fields[9]);
 				}
 				player->out = (read >= 11 && fields[10] != 0);
+				if (read >= 13) {
+					player->sog = clamp_zero((int)fields[11]);
+					player->season_sog = clamp_zero((int)fields[12]);
+				}
 				if (name_start != NULL)
 					name_copy(player->name, name_start,
 						  (size_t)(name_end - name_start));
@@ -1592,6 +1645,9 @@ static void credit_apply(int scorer, int assist1, int assist2, int delta)
 	if (p != NULL) {
 		p->goals = clamp_zero(p->goals + delta);
 		p->season_goals = clamp_zero(p->season_goals + delta);
+		/* A goal is also a shot on goal for the scorer. */
+		p->sog = clamp_zero(p->sog + delta);
+		p->season_sog = clamp_zero(p->season_sog + delta);
 	}
 	int assists[2] = {assist1, assist2};
 	for (int i = 0; i < 2; i++) {
@@ -2233,9 +2289,9 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 			continue;
 		scoreboard_format_plus_minus(p->plus_minus, tmp, sizeof(tmp));
 		snprintf(line, sizeof(line),
-			 "#%-3d %dG %dA %dP  +/- %s  PIM %d", p->number,
-			 p->goals, p->assists, p->goals + p->assists, tmp,
-			 p->pim);
+			 "#%-3d %dG %dA %dP  +/- %s  PIM %d  SOG %d",
+			 p->number, p->goals, p->assists,
+			 p->goals + p->assists, tmp, p->pim, p->sog);
 		append_line(buf, size, &len, line);
 	}
 	/* Players who sat this game, on one line, lowest number first. */
@@ -2280,10 +2336,10 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 		scoreboard_format_plus_minus(p->season_plus_minus, tmp,
 					     sizeof(tmp));
 		snprintf(line, sizeof(line),
-			 "#%-3d %dGP %dG %dA %dP  %.2f PPG  +/- %s  PIM %d",
+			 "#%-3d %dGP %dG %dA %dP  %.2f PPG  +/- %s  PIM %d  SOG %d",
 			 p->number, p->games, p->season_goals,
 			 p->season_assists, p->season_goals + p->season_assists,
-			 player_ppg(p), tmp, p->season_pim);
+			 player_ppg(p), tmp, p->season_pim, p->season_sog);
 		append_line(buf, size, &len, line);
 	}
 	for (int i = 0; i < g_state.goalie_count; i++) {
@@ -2389,6 +2445,9 @@ static void prev_game_save(void)
 	memcpy(g_prev_game.pm_events, g_state.pm_events,
 	       sizeof(g_prev_game.pm_events));
 	g_prev_game.pm_event_count = g_state.pm_event_count;
+	memcpy(g_prev_game.shot_log, g_state.shot_log,
+		   sizeof(g_prev_game.shot_log));
+	g_prev_game.shot_log_count = g_state.shot_log_count;
 	g_prev_game.game_ended = g_state.game_ended;
 	memcpy(g_prev_game.ended_players, g_state.ended_players,
 	       sizeof(g_prev_game.ended_players));
@@ -2417,6 +2476,9 @@ static void prev_game_restore(void)
 	memcpy(g_state.pm_events, g_prev_game.pm_events,
 	       sizeof(g_state.pm_events));
 	g_state.pm_event_count = g_prev_game.pm_event_count;
+	memcpy(g_state.shot_log, g_prev_game.shot_log,
+		   sizeof(g_state.shot_log));
+	g_state.shot_log_count = g_prev_game.shot_log_count;
 	g_state.game_ended = g_prev_game.game_ended;
 	memcpy(g_state.ended_players, g_prev_game.ended_players,
 	       sizeof(g_state.ended_players));
@@ -3019,11 +3081,56 @@ void scoreboard_set_home_score(int score)
 	mark_dirty();
 }
 
+/* ---- shot log: who each recent home shot was given to ---- */
+
+static void shot_log_push(int entry)
+{
+	if (g_state.shot_log_count == SCOREBOARD_SHOT_LOG_CAPACITY) {
+		memmove(&g_state.shot_log[0], &g_state.shot_log[1],
+				sizeof(g_state.shot_log[0]) *
+					(SCOREBOARD_SHOT_LOG_CAPACITY - 1));
+		g_state.shot_log_count--;
+	}
+	g_state.shot_log[g_state.shot_log_count++] = entry;
+}
+
+/* Remove the most recent entry that is (goal = true) or is not (goal =
+   false) a goal's shot. Returns the entry, or SHOT_LOG_UNASSIGNED when the
+   log has none of that kind (for example after a restart). */
+static int shot_log_pop(bool goal)
+{
+	for (int i = g_state.shot_log_count - 1; i >= 0; i--) {
+		const int entry = g_state.shot_log[i];
+		if ((entry == SHOT_LOG_GOAL) != goal)
+			continue;
+		memmove(&g_state.shot_log[i], &g_state.shot_log[i + 1],
+				sizeof(g_state.shot_log[0]) *
+					(size_t)(g_state.shot_log_count - i - 1));
+		g_state.shot_log_count--;
+		return entry;
+	}
+	return SHOT_LOG_UNASSIGNED;
+}
+
+bool scoreboard_home_shot_by(int number)
+{
+	struct scoreboard_player *p = roster_lookup(number);
+	if (p == NULL)
+		return false;
+	g_state.home_shots++;
+	p->sog++;
+	p->season_sog++;
+	shot_log_push(number);
+	mark_dirty();
+	return true;
+}
+
 void scoreboard_increment_home_score(void)
 {
 	g_state.home_score++;
 	/* A goal is also a shot on goal. */
 	g_state.home_shots++;
+	shot_log_push(SHOT_LOG_GOAL);
 	pm_record_goal(true);
 	mark_dirty();
 }
@@ -3034,6 +3141,7 @@ void scoreboard_decrement_home_score(void)
 		g_state.home_score--;
 		if (g_state.home_shots > 0)
 			g_state.home_shots--;
+		shot_log_pop(true);
 		pm_undo_goal(true);
 	}
 	mark_dirty();
@@ -3092,6 +3200,7 @@ void scoreboard_set_home_shots(int shots)
 void scoreboard_increment_home_shots(void)
 {
 	g_state.home_shots++;
+	shot_log_push(SHOT_LOG_UNASSIGNED);
 	mark_dirty();
 }
 
@@ -3099,6 +3208,14 @@ void scoreboard_decrement_home_shots(void)
 {
 	if (g_state.home_shots > 0)
 		g_state.home_shots--;
+	/* Taking a shot away takes it off the player it was given to. */
+	const int entry = shot_log_pop(false);
+	struct scoreboard_player *p =
+		entry >= 0 ? roster_lookup(entry) : NULL;
+	if (p != NULL) {
+		p->sog = clamp_zero(p->sog - 1);
+		p->season_sog = clamp_zero(p->season_sog - 1);
+	}
 	mark_dirty();
 }
 
@@ -4362,6 +4479,9 @@ bool scoreboard_save_state(const char *path)
 		fprintf(f, "  \"home_player%d_season_pim\": %d,\n", i,
 			p->season_pim);
 		fprintf(f, "  \"home_player%d_games\": %d,\n", i, p->games);
+		fprintf(f, "  \"home_player%d_sog\": %d,\n", i, p->sog);
+		fprintf(f, "  \"home_player%d_season_sog\": %d,\n", i,
+			p->season_sog);
 		fprintf(f, "  \"home_player%d_out\": %s,\n", i,
 			p->out ? "true" : "false");
 		fprintf(f, "  \"home_player%d_name\": \"%s\",\n", i, p->name);
@@ -4575,6 +4695,11 @@ bool scoreboard_load_state(const char *path)
 			p->season_pim = clamp_zero(parse_json_int(json, key, 0));
 			snprintf(key, sizeof(key), "home_player%d_games", i);
 			p->games = clamp_zero(parse_json_int(json, key, 0));
+			snprintf(key, sizeof(key), "home_player%d_sog", i);
+			p->sog = clamp_zero(parse_json_int(json, key, 0));
+			snprintf(key, sizeof(key), "home_player%d_season_sog",
+				 i);
+			p->season_sog = clamp_zero(parse_json_int(json, key, 0));
 			snprintf(key, sizeof(key), "home_player%d_out", i);
 			p->out = parse_json_bool(json, key, false);
 			snprintf(key, sizeof(key), "home_player%d_name", i);
@@ -4631,6 +4756,7 @@ bool scoreboard_load_state(const char *path)
 	}
 	/* Loaded totals have no matching goal history to reverse. */
 	g_state.pm_event_count = 0;
+	g_state.shot_log_count = 0;
 
 	{
 		int lcount = parse_json_int(json, "period_label_count", -1);

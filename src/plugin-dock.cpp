@@ -11,7 +11,9 @@
 #include <dlfcn.h>
 #endif
 
+#include <cstdint>
 #include <cstring>
+#include <map>
 #include <vector>
 
 #include <QtCore/QByteArray>
@@ -2813,6 +2815,8 @@ QString current_roster_key(char *buf, size_t size)
 	       QString::number(scoreboard_get_gaa_minutes());
 }
 
+void sync_player_shot_hotkeys();
+
 void persist_rosters_if_changed()
 {
 	char home_buf[2048];
@@ -2870,6 +2874,7 @@ void on_tick()
 		write_files_now();
 	update_all_labels();
 	persist_rosters_if_changed();
+	sync_player_shot_hotkeys();
 	if (was_running && !is_running && g_clock_btn)
 		g_clock_btn->repaint();
 }
@@ -4206,6 +4211,73 @@ void hk_away_foul2_minus(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 		scoreboard_decrement_away_fouls2();
 }
 
+/* One "Shot by #N" hotkey per home roster player. They are registered and
+   removed as the roster changes, and saved with the other hotkeys. */
+std::map<int, obs_hotkey_id> g_player_shot_hotkeys;
+
+QByteArray player_shot_hotkey_name(int number)
+{
+	return QByteArray("sb_shot_player_") + QByteArray::number(number);
+}
+
+void hk_player_shot(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed)
+{
+	if (pressed)
+		scoreboard_home_shot_by((int)(intptr_t)data);
+}
+
+void sync_player_shot_hotkeys()
+{
+	/* Add hotkeys for new players. */
+	for (int i = 0; i < scoreboard_roster_count(); i++) {
+		const int number = scoreboard_roster_get(i)->number;
+		if (g_player_shot_hotkeys.count(number) != 0)
+			continue;
+		const QByteArray name = player_shot_hotkey_name(number);
+		const QByteArray desc =
+			QByteArray("Streamn: Shot by #") + QByteArray::number(number);
+		const obs_hotkey_id id = obs_hotkey_register_frontend(
+			name.constData(), desc.constData(), hk_player_shot,
+			(void *)(intptr_t)number);
+		if (id == OBS_INVALID_HOTKEY_ID)
+			continue;
+		g_player_shot_hotkeys[number] = id;
+
+		/* Bring back the key the user chose for this player. */
+		config_t *profile_cfg = obs_frontend_get_profile_config();
+		const char *json =
+			profile_cfg ? config_get_string(profile_cfg, kConfigSection,
+											"hotkeys")
+						: nullptr;
+		obs_data_t *obj = json ? obs_data_create_from_json(json) : nullptr;
+		if (obj) {
+			obs_data_array_t *a =
+				obs_data_get_array(obj, name.constData());
+			if (a) {
+				obs_hotkey_load(id, a);
+				obs_data_array_release(a);
+			}
+			obs_data_release(obj);
+		}
+	}
+
+	/* Remove hotkeys for players who left the roster. */
+	for (auto it = g_player_shot_hotkeys.begin();
+		 it != g_player_shot_hotkeys.end();) {
+		bool on_roster = false;
+		for (int i = 0; i < scoreboard_roster_count(); i++) {
+			if (scoreboard_roster_get(i)->number == it->first)
+				on_roster = true;
+		}
+		if (on_roster) {
+			++it;
+			continue;
+		}
+		obs_hotkey_unregister(it->second);
+		it = g_player_shot_hotkeys.erase(it);
+	}
+}
+
 void save_hotkeys(obs_data_t *save_data, bool saving, void *private_data)
 {
 	(void)save_data;
@@ -4216,13 +4288,29 @@ void save_hotkeys(obs_data_t *save_data, bool saving, void *private_data)
 		return;
 
 	if (saving) {
-		obs_data_t *obj = obs_data_create();
+		/* Start from what was saved so keys for players who are off the
+		   roster right now are not forgotten. */
+		const char *old_json =
+			config_get_string(profile_cfg, kConfigSection, "hotkeys");
+		obs_data_t *obj =
+			old_json ? obs_data_create_from_json(old_json) : nullptr;
+		if (!obj)
+			obj = obs_data_create();
 		for (int i = 0; i < kNumHotkeys; i++) {
 			if (g_hotkey_ids[i] == OBS_INVALID_HOTKEY_ID)
 				continue;
 			obs_data_array_t *a = obs_hotkey_save(g_hotkey_ids[i]);
 			if (a) {
 				obs_data_set_array(obj, kHotkeyNames[i], a);
+				obs_data_array_release(a);
+			}
+		}
+		for (const auto &entry : g_player_shot_hotkeys) {
+			obs_data_array_t *a = obs_hotkey_save(entry.second);
+			if (a) {
+				obs_data_set_array(
+					obj, player_shot_hotkey_name(entry.first).constData(),
+					a);
 				obs_data_array_release(a);
 			}
 		}

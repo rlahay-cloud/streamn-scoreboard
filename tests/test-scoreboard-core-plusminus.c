@@ -803,8 +803,9 @@ static void test_roster_string_round_trip(void)
 	scoreboard_player_set_season(10, 9, 8, 7);
 
 	scoreboard_roster_to_string(buf, sizeof(buf));
-	assert(strcmp(buf, "10:0:0:2:3:9:8:7:0:0:0:0,11:0:0:0:0:0:0:0:0:0:0:0,"
-			   "12:0:-3:0:0:-3:0:0:0:0:0:0") == 0);
+	assert(strcmp(buf, "10:0:0:2:3:9:8:7:0:0:0:0:0:0,"
+			   "11:0:0:0:0:0:0:0:0:0:0:0:0:0,"
+			   "12:0:-3:0:0:-3:0:0:0:0:0:0:0:0") == 0);
 
 	scoreboard_roster_clear();
 	scoreboard_roster_to_string(buf, sizeof(buf));
@@ -827,12 +828,12 @@ static void test_roster_string_round_trip(void)
 
 static void test_roster_string_truncates_cleanly(void)
 {
-	char buf[26];
+	char buf[30];
 	char zero[1] = {'x'};
 	setup_roster();
-	/* "10:0:0:0:0:0:0:0:0:0:0:0" is 24 chars; a second entry would not fit. */
+	/* "10:0:0:0:0:0:0:0:0:0:0:0:0:0" is 28 chars; a second entry would not fit. */
 	scoreboard_roster_to_string(buf, sizeof(buf));
-	assert(strcmp(buf, "10:0:0:0:0:0:0:0:0:0:0:0") == 0);
+	assert(strcmp(buf, "10:0:0:0:0:0:0:0:0:0:0:0:0:0") == 0);
 	scoreboard_roster_to_string(zero, 0);
 	assert(zero[0] == 'x');
 }
@@ -969,8 +970,151 @@ static void test_load_older_state_files(void)
 	cleanup_tmp_dir();
 }
 
+static void test_shot_by_player(void)
+{
+	setup_tmp_dir();
+	setup_roster();
+	assert(!scoreboard_home_shot_by(99));
+	assert(scoreboard_get_home_shots() == 0);
+
+	/* a hotkey shot is a team shot and a shot on goal for that player */
+	assert(scoreboard_home_shot_by(10));
+	assert(scoreboard_home_shot_by(10));
+	assert(scoreboard_home_shot_by(11));
+	assert(scoreboard_get_home_shots() == 3);
+	assert(scoreboard_player_get_sog(10) == 2);
+	assert(scoreboard_player_get_season_sog(10) == 2);
+	assert(scoreboard_player_get_sog(11) == 1);
+	assert(scoreboard_player_get_sog(99) == 0);
+	assert(scoreboard_player_get_season_sog(99) == 0);
+
+	/* a plain counter shot belongs to nobody */
+	scoreboard_increment_home_shots();
+	assert(scoreboard_get_home_shots() == 4);
+	assert(scoreboard_player_get_sog(10) == 2);
+
+	/* taking one away removes the newest shot; the plain one goes first */
+	scoreboard_decrement_home_shots();
+	assert(scoreboard_get_home_shots() == 3);
+	assert(scoreboard_player_get_sog(11) == 1);
+	scoreboard_decrement_home_shots();
+	assert(scoreboard_get_home_shots() == 2);
+	assert(scoreboard_player_get_sog(11) == 0);
+	assert(scoreboard_player_get_season_sog(11) == 0);
+	assert(scoreboard_player_get_sog(10) == 2);
+
+	/* a goal is a shot nobody owns, and taking the goal back drops it */
+	scoreboard_increment_home_score();
+	assert(scoreboard_get_home_shots() == 3);
+	scoreboard_decrement_home_shots();
+	assert(scoreboard_get_home_shots() == 2);
+	assert(scoreboard_player_get_sog(10) == 1);
+	scoreboard_increment_home_score();
+	scoreboard_decrement_home_score();
+	assert(scoreboard_get_home_shots() == 2);
+	scoreboard_decrement_home_shots();
+	assert(scoreboard_player_get_sog(10) == 0);
+
+	/* with nothing left to undo (and an empty log) nothing breaks */
+	scoreboard_decrement_home_shots();
+	scoreboard_decrement_home_shots();
+	assert(scoreboard_get_home_shots() == 0);
+	scoreboard_decrement_home_score();
+
+	/* a removed player's shot is just a team shot */
+	assert(scoreboard_home_shot_by(12));
+	scoreboard_roster_remove(12);
+	scoreboard_decrement_home_shots();
+	assert(scoreboard_get_home_shots() == 0);
+
+	/* manual edits move the season like the other stats */
+	assert(!scoreboard_player_set_sog(99, 1));
+	assert(!scoreboard_player_set_season_sog(99, 1));
+	assert(scoreboard_player_set_sog(10, 5));
+	assert(scoreboard_player_get_sog(10) == 5);
+	assert(scoreboard_player_get_season_sog(10) == 5);
+	assert(scoreboard_player_set_season_sog(10, 20));
+	assert(scoreboard_player_set_sog(10, -4));
+	assert(scoreboard_player_get_sog(10) == 0);
+	assert(scoreboard_player_get_season_sog(10) == 15);
+	scoreboard_player_set_sog(10, 1000);
+	assert(scoreboard_player_set_season_sog(10, -1));
+	assert(scoreboard_player_get_season_sog(10) == 0);
+
+	/* new game clears the game value only */
+	scoreboard_player_set_sog(10, 3);
+	scoreboard_player_set_season_sog(10, 9);
+	scoreboard_new_game();
+	assert(scoreboard_player_get_sog(10) == 0);
+	assert(scoreboard_player_get_season_sog(10) == 9);
+	scoreboard_roster_reset_season_stats();
+	assert(scoreboard_player_get_season_sog(10) == 0);
+}
+
+static void test_shot_log_is_bounded(void)
+{
+	setup_roster();
+	for (int i = 0; i < 70; i++)
+		assert(scoreboard_home_shot_by(10));
+	assert(scoreboard_player_get_sog(10) == 70);
+	/* only the newest 64 can be undone; later ones stay with the player */
+	for (int i = 0; i < 70; i++)
+		scoreboard_decrement_home_shots();
+	assert(scoreboard_get_home_shots() == 0);
+	assert(scoreboard_player_get_sog(10) == 6);
+}
+
+static void test_credited_goal_counts_as_scorer_shot(void)
+{
+	setup_roster();
+	scoreboard_increment_home_score();
+	assert(scoreboard_credit_goal(10, -1, -1));
+	assert(scoreboard_player_get_sog(10) == 1);
+	assert(scoreboard_player_get_season_sog(10) == 1);
+	scoreboard_decrement_home_score();
+	assert(scoreboard_player_get_sog(10) == 0);
+}
+
+static void test_sog_persistence_and_text(void)
+{
+	char path[512];
+	char buf[1024];
+	setup_tmp_dir();
+	setup_roster();
+	scoreboard_home_shot_by(10);
+	scoreboard_home_shot_by(10);
+	scoreboard_player_set_season_sog(10, 7);
+
+	scoreboard_roster_to_string(buf, sizeof(buf));
+	assert(strstr(buf, "10:0:0:0:0:0:0:0:0:0:0:0:2:7") != NULL);
+	scoreboard_roster_clear();
+	scoreboard_roster_from_string(buf);
+	assert(player(10)->sog == 2 && player(10)->season_sog == 7);
+
+	/* a shorter, older form loads with zero shots */
+	scoreboard_roster_clear();
+	scoreboard_roster_from_string("10:0:0:0:0:0:0:0:0:0:0:0");
+	assert(player(10)->sog == 0 && player(10)->season_sog == 0);
+
+	scoreboard_player_set_sog(10, 2);
+	scoreboard_player_set_season_sog(10, 7);
+	snprintf(path, sizeof(path), "%s/state.json", g_tmp_dir);
+	assert(scoreboard_save_state(path));
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_load_state(path));
+	assert(player(10)->sog == 2 && player(10)->season_sog == 7);
+
+	assert(scoreboard_format_player_file(10, buf, sizeof(buf)));
+	assert(strstr(buf, "| 2 SOG\n") != NULL);
+	assert(strstr(buf, "| 7 SOG\n") != NULL);
+}
+
 int main(void)
 {
+	test_shot_by_player();
+	test_shot_log_is_bounded();
+	test_credited_goal_counts_as_scorer_shot();
+	test_sog_persistence_and_text();
 	test_roster_add_get_remove_clear();
 	test_roster_full();
 	test_roster_marks_dirty();

@@ -299,6 +299,8 @@ struct scoreboard_player {
 	int pim;        /* penalty minutes this game */
 	int season_pim;
 	int games;      /* games finished with End Game that this player was in */
+	int sog;        /* shots on goal this game (see scoreboard_home_shot_by) */
+	int season_sog;
 	bool out;       /* not in today's lineup (see scoreboard_player_set_dressed) */
 	char name[SCOREBOARD_NAME_LEN]; /* optional, "" when not given */
 };
@@ -460,6 +462,18 @@ bool scoreboard_import_backup(const char *path);
 bool scoreboard_player_set_pim(int number, int pim);
 int scoreboard_player_get_pim(int number);
 bool scoreboard_player_set_season_pim(int number, int pim);
+
+/* Shots on goal for a home player. scoreboard_home_shot_by() adds a team shot
+ * and a shot on goal for that jersey number (false if not on the roster).
+ * Taking a shot away with scoreboard_decrement_home_shots() removes it from
+ * the player it was given to, using a memory of the last
+ * SCOREBOARD_SHOT_LOG_CAPACITY shots. A goal counts as a shot for whoever is
+ * credited as the scorer. Game edits move the season value. */
+bool scoreboard_home_shot_by(int number);
+bool scoreboard_player_set_sog(int number, int sog);
+bool scoreboard_player_set_season_sog(int number, int sog);
+int scoreboard_player_get_sog(int number);
+int scoreboard_player_get_season_sog(int number);
 bool scoreboard_player_set_games(int number, int games);
 /* "#12   4 game   18 season" for players with any penalty minutes. */
 void scoreboard_format_pim_lines(char *buf, size_t size);

@@ -200,7 +200,9 @@ These all sit with the player stats (hockey only).
 
 ## Hotkeys
 
-All 45 hotkeys are prefixed with "Streamn:" in OBS Settings > Hotkeys:
+All 45 fixed hotkeys are prefixed with "Streamn:" in OBS Settings > Hotkeys:
+
+In addition, every player on the home roster gets a **Streamn: Shot by #N** hotkey (no key assigned until you pick one). It counts a team shot and a shot on goal for that player; removing a shot with the shot counter takes it off that player.
 
 | Hotkey | Action |
 |--------|--------|

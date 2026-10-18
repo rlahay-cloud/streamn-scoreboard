@@ -5,6 +5,7 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Shots on goal for each home player. Every player on the roster gets an OBS hotkey called **Streamn: Shot by #N** (OBS Settings, Hotkeys). Pressing it adds one to the team shots and one shot on goal for that player. The normal shot counter and its hotkeys work as before. Taking a shot away with the counter removes the newest shot, and if it belonged to a player, that player loses it too. A goal counts as a shot on goal for whoever is credited as the scorer. Shots on goal appear in each `player_<n>.txt` file and in the game summary. The dock layout is unchanged.
 - Home player stats for hockey, kept in their own **Home Players** window opened from one **Player Stats / Roster...** button in the dock. The window shows the whole roster, two players per row, and stays open while you work. Only the home team is tracked.
 - After every goal, home or away, a window asks which players were on the ice and plus/minus is updated: +1 for a home goal, -1 for an away goal. Every box starts empty for each goal, and Skip changes nothing. For a home goal the window also asks who scored and who assisted, and ticks those players as on the ice for you. Roster menu items reopen the window for the last home or away goal to fix it later.
 - No plus/minus is given for goals scored while any penalty is active on either team. This can be turned off from the Roster menu.

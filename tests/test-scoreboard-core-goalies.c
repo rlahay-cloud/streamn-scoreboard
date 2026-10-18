@@ -1435,8 +1435,8 @@ static void test_player_and_goalie_files(void)
 
 	assert(scoreboard_format_player_file(10, buf, sizeof(buf)));
 	assert(strcmp(buf, "#10\n"
-			   "Game: 0 +/- | 0G 0A 0P | 0 PIM\n"
-			   "Season: 0 GP | 0 +/- | 0G 0A 0P | 0.00 PPG | 0 PIM\n") == 0);
+			   "Game: 0 +/- | 0G 0A 0P | 0 PIM | 0 SOG\n"
+			   "Season: 0 GP | 0 +/- | 0G 0A 0P | 0.00 PPG | 0 PIM | 0 SOG\n") == 0);
 
 	scoreboard_player_set_name(10, "Jane Smith");
 	scoreboard_player_set_goals(10, 2);
@@ -1446,8 +1446,8 @@ static void test_player_and_goalie_files(void)
 	scoreboard_player_set_season(10, 5, 6, 7);
 	assert(scoreboard_format_player_file(10, buf, sizeof(buf)));
 	assert(strncmp(buf, "#10 Jane Smith\n", 15) == 0);
-	assert(strstr(buf, "Game: +2 +/- | 2G 1A 3P | 4 PIM\n") != NULL);
-	assert(strstr(buf, "Season: 0 GP | +5 +/- | 6G 7A 13P | 0.00 PPG | 4 PIM\n") != NULL);
+	assert(strstr(buf, "Game: +2 +/- | 2G 1A 3P | 4 PIM | 0 SOG\n") != NULL);
+	assert(strstr(buf, "Season: 0 GP | +5 +/- | 6G 7A 13P | 0.00 PPG | 4 PIM | 0 SOG\n") != NULL);
 
 	scoreboard_goalie_set_name(31, "Sam Wall");
 	scoreboard_goalie_set_shots_against(31, 10);
@@ -1465,8 +1465,8 @@ static void test_player_and_goalie_files(void)
 	scoreboard_set_output_directory(g_tmp_dir);
 	assert(scoreboard_write_all_files());
 	expect_file("player_11.txt",
-		    "#11\nGame: 0 +/- | 0G 0A 0P | 0 PIM\n"
-		    "Season: 0 GP | 0 +/- | 0G 0A 0P | 0.00 PPG | 0 PIM\n");
+		    "#11\nGame: 0 +/- | 0G 0A 0P | 0 PIM | 0 SOG\n"
+		    "Season: 0 GP | 0 +/- | 0G 0A 0P | 0.00 PPG | 0 PIM | 0 SOG\n");
 	char path[512];
 	snprintf(path, sizeof(path), "%s/player_10.txt", g_tmp_dir);
 	char *content = read_file_content(path);
