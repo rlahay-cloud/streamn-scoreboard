@@ -1109,8 +1109,44 @@ static void test_sog_persistence_and_text(void)
 	assert(strstr(buf, "| 7 SOG\n") != NULL);
 }
 
+static void test_shot_log_text_round_trip(void)
+{
+	char buf[256];
+	char tiny[4];
+	setup_roster();
+	scoreboard_home_shot_by(10);
+	scoreboard_increment_home_shots();
+	scoreboard_increment_home_score();
+	scoreboard_home_shot_by(11);
+	scoreboard_shot_log_to_string(buf, sizeof(buf));
+	assert(strcmp(buf, "10,-1,-2,11") == 0);
+
+	/* too small a buffer is cut at an entry, and size 0 is safe */
+	scoreboard_shot_log_to_string(tiny, sizeof(tiny));
+	assert(strcmp(tiny, "10") == 0);
+	scoreboard_shot_log_to_string(tiny, 0);
+
+	/* the memory comes back and still undoes shots */
+	scoreboard_shot_log_from_string("");
+	scoreboard_shot_log_to_string(buf, sizeof(buf));
+	assert(buf[0] == '\0');
+	scoreboard_shot_log_from_string("10,-1,-2,11");
+	scoreboard_decrement_home_shots();
+	assert(scoreboard_player_get_sog(11) == 0);
+	assert(scoreboard_player_get_sog(10) == 1);
+
+	/* bad pieces are skipped or stop the reading */
+	scoreboard_shot_log_from_string("10,500000,x,11");
+	scoreboard_shot_log_to_string(buf, sizeof(buf));
+	assert(strcmp(buf, "10") == 0);
+	scoreboard_shot_log_from_string(NULL);
+	scoreboard_shot_log_to_string(buf, sizeof(buf));
+	assert(buf[0] == '\0');
+}
+
 int main(void)
 {
+	test_shot_log_text_round_trip();
 	test_shot_by_player();
 	test_shot_log_is_bounded();
 	test_credited_goal_counts_as_scorer_shot();

@@ -81,6 +81,7 @@ const char *kPlusMinusCountPowerPlayKey = "pm_count_power_play_goals";
 const char *kSkipScorerPromptKey = "skip_scorer_prompt";
 const char *kHomeGoaliesKey = "home_goalies";
 const char *kLinesKey = "home_lines";
+const char *kShotLogKey = "home_shot_log";
 const char *kGaaMinutesKey = "gaa_minutes";
 const char *kEventLeadKey = "event_lead_seconds";
 const char *kReopenMemoryKey = "reopen_memory";
@@ -1329,6 +1330,7 @@ void edit_player_stats(QWidget *parent, int number)
 	const int old_season_goals = p->season_goals;
 	const int old_season_assists = p->season_assists;
 	const int old_season_pim = p->season_pim;
+	const int old_season_sog = p->season_sog;
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(QString("Edit #%1").arg(number));
@@ -1361,22 +1363,28 @@ void edit_player_stats(QWidget *parent, int number)
 	grid->addWidget(new QLabel("Penalty minutes:", &dialog), 4, 0);
 	grid->addWidget(game_pim, 4, 1);
 	grid->addWidget(season_pim, 4, 2);
-	grid->addWidget(new QLabel("Games played:", &dialog), 5, 0);
-	grid->addWidget(games, 5, 2);
+	QSpinBox *game_sog = make_stat_spin(&dialog, 0, 999, p->sog);
+	QSpinBox *season_sog =
+		make_stat_spin(&dialog, 0, 9999, old_season_sog);
+	grid->addWidget(new QLabel("Shots on goal:", &dialog), 5, 0);
+	grid->addWidget(game_sog, 5, 1);
+	grid->addWidget(season_sog, 5, 2);
+	grid->addWidget(new QLabel("Games played:", &dialog), 6, 0);
+	grid->addWidget(games, 6, 2);
 	QLabel *note = new QLabel(
 		"Changing a game number also moves the season number by the same amount.",
 		&dialog);
 	note->setWordWrap(true);
 	note->setStyleSheet("font-size: 10px; color: gray;");
-	grid->addWidget(note, 6, 0, 1, 3);
-	grid->addWidget(new QLabel("Name:", &dialog), 7, 0);
+	grid->addWidget(note, 7, 0, 1, 3);
+	grid->addWidget(new QLabel("Name:", &dialog), 8, 0);
 	QLineEdit *name_edit =
 		new QLineEdit(QString::fromUtf8(p->name), &dialog);
 	name_edit->setMaxLength(SCOREBOARD_NAME_LEN - 1);
-	grid->addWidget(name_edit, 7, 1, 1, 2);
+	grid->addWidget(name_edit, 8, 1, 1, 2);
 	QDialogButtonBox *buttons = new QDialogButtonBox(
 		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-	grid->addWidget(buttons, 8, 0, 1, 3);
+	grid->addWidget(buttons, 9, 0, 1, 3);
 	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
 			 &QDialog::accept);
 	QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
@@ -1390,6 +1398,9 @@ void edit_player_stats(QWidget *parent, int number)
 	scoreboard_player_set_assists(number, game_assists->value());
 	scoreboard_player_set_pim(number, game_pim->value());
 	scoreboard_player_set_games(number, games->value());
+	scoreboard_player_set_sog(number, game_sog->value());
+	if (season_sog->value() != old_season_sog)
+		scoreboard_player_set_season_sog(number, season_sog->value());
 	if (season_pim->value() != old_season_pim)
 		scoreboard_player_set_season_pim(number, season_pim->value());
 	/* Season numbers typed here win over the shift from the game edit. */
@@ -2806,7 +2817,10 @@ QString current_roster_key(char *buf, size_t size)
 	scoreboard_lines_to_string(lines_buf, sizeof(lines_buf));
 	char memory_buf[6144];
 	scoreboard_reopen_memory_to_string(memory_buf, sizeof(memory_buf));
-	return QString::fromUtf8(buf) + "|" + QString::fromUtf8(goalie_buf) +
+	char shot_buf[512];
+	scoreboard_shot_log_to_string(shot_buf, sizeof(shot_buf));
+	return QString::fromUtf8(buf) + "|" + QString::fromUtf8(shot_buf) +
+		   "|" + QString::fromUtf8(goalie_buf) +
 	       "|" + QString::fromUtf8(lines_buf) + "|" +
 	       QString::fromUtf8(memory_buf) +
 	       (scoreboard_get_plus_minus_skip_power_play() ? "|1" : "|0") +
@@ -2840,6 +2854,9 @@ void persist_rosters_if_changed()
 	scoreboard_reopen_memory_to_string(memory_buf, sizeof(memory_buf));
 	config_set_string(profile_cfg, kConfigSection, kReopenMemoryKey,
 			  memory_buf);
+	char shot_buf[512];
+	scoreboard_shot_log_to_string(shot_buf, sizeof(shot_buf));
+	config_set_string(profile_cfg, kConfigSection, kShotLogKey, shot_buf);
 	config_set_int(profile_cfg, kConfigSection, kGaaMinutesKey,
 		       scoreboard_get_gaa_minutes());
 	config_set_bool(profile_cfg, kConfigSection, kKeepPenaltyOnAwayGoalKey,
@@ -2924,6 +2941,8 @@ void load_profile_paths()
 			profile_cfg, kConfigSection, kLinesKey));
 		scoreboard_reopen_memory_from_string(config_get_string(
 			profile_cfg, kConfigSection, kReopenMemoryKey));
+		scoreboard_shot_log_from_string(config_get_string(
+			profile_cfg, kConfigSection, kShotLogKey));
 		/* 0 (never saved) keeps the default game length. */
 		const int saved_gaa = (int)config_get_int(
 			profile_cfg, kConfigSection, kGaaMinutesKey);

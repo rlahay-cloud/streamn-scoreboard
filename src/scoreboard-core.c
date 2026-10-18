@@ -3125,6 +3125,46 @@ bool scoreboard_home_shot_by(int number)
 	return true;
 }
 
+/* Compact text form of the shot log so the dock can keep it across restarts:
+   comma separated, oldest first (-1 nobody, -2 a goal's shot, else jersey). */
+void scoreboard_shot_log_to_string(char *buf, size_t size)
+{
+	if (size == 0)
+		return;
+	buf[0] = '\0';
+	size_t len = 0;
+	for (int i = 0; i < g_state.shot_log_count; i++) {
+		char item[16];
+		int n = snprintf(item, sizeof(item), "%d", g_state.shot_log[i]);
+		size_t need = (size_t)n + (len > 0 ? 1 : 0);
+		if (len + need >= size)
+			break;
+		if (len > 0)
+			buf[len++] = ',';
+		memcpy(buf + len, item, (size_t)n + 1);
+		len += (size_t)n;
+	}
+}
+
+void scoreboard_shot_log_from_string(const char *text)
+{
+	g_state.shot_log_count = 0;
+	if (text == NULL)
+		return;
+	const char *p = text;
+	while (*p != '\0') {
+		char *end = NULL;
+		long value = strtol(p, &end, 10);
+		if (end == p)
+			break;
+		if (value >= SHOT_LOG_GOAL && value <= 9999)
+			shot_log_push((int)value);
+		p = end;
+		if (*p == ',')
+			p++;
+	}
+}
+
 void scoreboard_increment_home_score(void)
 {
 	g_state.home_score++;

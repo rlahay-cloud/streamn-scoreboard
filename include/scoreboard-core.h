@@ -470,6 +470,10 @@ bool scoreboard_player_set_season_pim(int number, int pim);
  * SCOREBOARD_SHOT_LOG_CAPACITY shots. A goal counts as a shot for whoever is
  * credited as the scorer. Game edits move the season value. */
 bool scoreboard_home_shot_by(int number);
+/* The memory of whom recent shots went to, as text, so it can be kept across
+ * restarts. from_string replaces the memory; bad text is ignored. */
+void scoreboard_shot_log_to_string(char *buf, size_t size);
+void scoreboard_shot_log_from_string(const char *text);
 bool scoreboard_player_set_sog(int number, int sog);
 bool scoreboard_player_set_season_sog(int number, int sog);
 int scoreboard_player_get_sog(int number);
