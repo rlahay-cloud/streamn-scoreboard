@@ -1481,6 +1481,60 @@ static void test_player_and_goalie_files(void)
 	cleanup_tmp_dir();
 }
 
+/* The game summary lists players by jersey number, lowest first, in both the
+   game and the season sections, even though the roster keeps the order the
+   players were added in. */
+static void test_summary_sorted_by_number(void)
+{
+	scoreboard_reset_state_for_tests();
+	scoreboard_roster_add(17);
+	scoreboard_roster_add(4);
+	scoreboard_roster_add(9);
+	scoreboard_roster_add(12);
+	scoreboard_player_set_dressed(9, false); /* sat this game */
+	const int played[] = {17, 4, 12};
+	assert(scoreboard_end_game(played, 3));
+	char buf[4096];
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	const char *game = strstr(buf, "PLAYERS THIS GAME");
+	const char *season = strstr(buf, "SEASON TO DATE");
+	assert(game != NULL && season != NULL && game < season);
+	const char *p4 = strstr(game, "#4 ");
+	const char *p12 = strstr(game, "#12 ");
+	const char *p17 = strstr(game, "#17 ");
+	assert(p4 && p12 && p17 && p4 < p12 && p12 < p17);
+	/* The player who sat is left out of the list and named on its own line. */
+	const char *dnp = strstr(game, "Did not play: #9\n");
+	assert(dnp != NULL && dnp < season);
+	assert(dnp > p17);
+	assert(strstr(game, "#9  ") == NULL);
+	const char *s4 = strstr(season, "#4 ");
+	const char *s9 = strstr(season, "#9 ");
+	const char *s12 = strstr(season, "#12 ");
+	const char *s17 = strstr(season, "#17 ");
+	assert(s4 && s9 && s12 && s17);
+	assert(s4 < s9 && s9 < s12 && s12 < s17);
+
+	/* Several players sat: one line, lowest number first. */
+	scoreboard_reset_state_for_tests();
+	scoreboard_roster_add(30);
+	scoreboard_roster_add(5);
+	scoreboard_roster_add(8);
+	scoreboard_player_set_dressed(30, false);
+	scoreboard_player_set_dressed(8, false);
+	const int only5[] = {5};
+	assert(scoreboard_end_game(only5, 1));
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "Did not play: #8 #30\n") != NULL);
+
+	/* Nobody sat: no such line. */
+	scoreboard_reset_state_for_tests();
+	scoreboard_roster_add(5);
+	assert(scoreboard_end_game(only5, 1));
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "Did not play") == NULL);
+}
+
 int main(void)
 {
 	test_goalie_roster();
@@ -1516,6 +1570,7 @@ int main(void)
 	test_goals_against_average();
 	test_names();
 	test_player_and_goalie_files();
+	test_summary_sorted_by_number();
 	printf("scoreboard-core goalie tests passed\n");
 	return 0;
 }

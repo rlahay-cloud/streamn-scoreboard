@@ -2178,6 +2178,26 @@ static bool player_was_in_game(int number)
 			      g_state.ended_player_count, number);
 }
 
+/* Roster slots in jersey number order (lowest first), for the game summary.
+   The roster itself stays in the order players were added. */
+static int roster_order_by_number(int *order)
+{
+	const int n = g_state.home_roster_count;
+	for (int i = 0; i < n; i++)
+		order[i] = i;
+	for (int i = 1; i < n; i++) {
+		const int slot = order[i];
+		int j = i - 1;
+		while (j >= 0 && g_state.home_roster[order[j]].number >
+					 g_state.home_roster[slot].number) {
+			order[j + 1] = order[j];
+			j--;
+		}
+		order[j + 1] = slot;
+	}
+	return n;
+}
+
 void scoreboard_format_game_summary(char *buf, size_t size)
 {
 	if (size == 0)
@@ -2186,6 +2206,8 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 	size_t len = 0;
 	char line[160];
 	char tmp[64];
+	int order[SCOREBOARD_MAX_ROSTER];
+	const int order_count = roster_order_by_number(order);
 
 	append_line(buf, size, &len, "GAME SUMMARY");
 	snprintf(line, sizeof(line), "%s %d - %d %s", g_state.home_name,
@@ -2204,8 +2226,9 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 
 	append_line(buf, size, &len, "");
 	append_line(buf, size, &len, "PLAYERS THIS GAME");
-	for (int i = 0; i < g_state.home_roster_count; i++) {
-		const struct scoreboard_player *p = &g_state.home_roster[i];
+	for (int i = 0; i < order_count; i++) {
+		const struct scoreboard_player *p =
+			&g_state.home_roster[order[i]];
 		if (!player_was_in_game(p->number))
 			continue;
 		scoreboard_format_plus_minus(p->plus_minus, tmp, sizeof(tmp));
@@ -2213,6 +2236,26 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 			 "#%-3d %dG %dA %dP  +/- %s  PIM %d", p->number,
 			 p->goals, p->assists, p->goals + p->assists, tmp,
 			 p->pim);
+		append_line(buf, size, &len, line);
+	}
+	/* Players who sat this game, on one line, lowest number first. */
+	char absent[SCOREBOARD_MAX_ROSTER * 6 + 1];
+	size_t absent_len = 0;
+	absent[0] = '\0';
+	for (int i = 0; i < order_count; i++) {
+		const struct scoreboard_player *p =
+			&g_state.home_roster[order[i]];
+		if (player_was_in_game(p->number))
+			continue;
+		/* Room for every roster number, so nothing is cut. */
+		absent_len += (size_t)snprintf(absent + absent_len,
+					       sizeof(absent) - absent_len,
+					       "%s#%d",
+					       absent_len > 0 ? " " : "",
+					       p->number);
+	}
+	if (absent_len > 0) {
+		snprintf(line, sizeof(line), "Did not play: %s", absent);
 		append_line(buf, size, &len, line);
 	}
 
@@ -2229,8 +2272,9 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 
 	append_line(buf, size, &len, "");
 	append_line(buf, size, &len, "SEASON TO DATE");
-	for (int i = 0; i < g_state.home_roster_count; i++) {
-		const struct scoreboard_player *p = &g_state.home_roster[i];
+	for (int i = 0; i < order_count; i++) {
+		const struct scoreboard_player *p =
+			&g_state.home_roster[order[i]];
 		scoreboard_format_plus_minus(p->season_plus_minus, tmp,
 					     sizeof(tmp));
 		snprintf(line, sizeof(line),
