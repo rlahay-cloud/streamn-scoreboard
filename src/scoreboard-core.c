@@ -2255,8 +2255,10 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 					       p->number);
 	}
 	if (absent_len > 0) {
-		snprintf(line, sizeof(line), "Did not play: %s", absent);
-		append_line(buf, size, &len, line);
+		char absent_line[SCOREBOARD_MAX_ROSTER * 6 + 24];
+		snprintf(absent_line, sizeof(absent_line), "Did not play: %s",
+			 absent);
+		append_line(buf, size, &len, absent_line);
 	}
 
 	append_line(buf, size, &len, "");

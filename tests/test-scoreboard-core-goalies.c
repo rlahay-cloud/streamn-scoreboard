@@ -1064,7 +1064,9 @@ static void test_todays_lineup(void)
 	char *season_part = strstr(summary, "SEASON TO DATE");
 	assert(season_part != NULL);
 	*season_part = '\0';
-	assert(strstr(summary, "#10") != NULL && strstr(summary, "#12") == NULL);
+	/* #12 sat: no player row, only the "Did not play" line. */
+	assert(strstr(summary, "#10") != NULL && strstr(summary, "#12  ") == NULL);
+	assert(strstr(summary, "Did not play: #12") != NULL);
 	const int played[2] = {10, 11};
 	scoreboard_end_game(played, 2);
 	assert(player(10)->games == 1 && player(11)->games == 1);
@@ -1507,7 +1509,8 @@ static void test_summary_sorted_by_number(void)
 	const char *dnp = strstr(game, "Did not play: #9\n");
 	assert(dnp != NULL && dnp < season);
 	assert(dnp > p17);
-	assert(strstr(game, "#9  ") == NULL);
+	const char *row9 = strstr(game, "#9  ");
+	assert(row9 == NULL || row9 > season); /* a row only in the season part */
 	const char *s4 = strstr(season, "#4 ");
 	const char *s9 = strstr(season, "#9 ");
 	const char *s12 = strstr(season, "#12 ");
