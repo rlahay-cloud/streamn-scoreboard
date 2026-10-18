@@ -2269,25 +2269,26 @@ void show_player_menu(QWidget *button, int number, const QPoint &pos)
 	update_all_labels();
 }
 
-/* "#12    +2    1G  2A  3P" with the columns lined up. */
+/* "#12    +2    1G  2A  3P ... 4SOG" with the columns lined up. */
 QString player_row_text(const struct scoreboard_player *p, bool season)
 {
 	const int pm_value = season ? p->season_plus_minus : p->plus_minus;
 	const int goals = season ? p->season_goals : p->goals;
 	const int assists = season ? p->season_assists : p->assists;
 	const int pim = season ? p->season_pim : p->pim;
+	const int sog = season ? p->season_sog : p->sog;
 	char pm[16];
 	scoreboard_format_plus_minus(pm_value, pm, sizeof(pm));
 	const QString who = QString::asprintf("#%-3d ", p->number) +
 			    name_cell(p->name) + QLatin1Char(' ');
 	if (!season)
-		return who + QString::asprintf("%4s  %2dG %2dA %2dP %3dPIM%s", pm,
-					       goals, assists, goals + assists, pim,
-					       p->out ? "  (out)" : "");
+		return who + QString::asprintf("%4s  %2dG %2dA %2dP %3dPIM %3dSOG%s",
+					       pm, goals, assists, goals + assists,
+					       pim, sog, p->out ? "  (out)" : "");
 	return who + QString::asprintf(
-			     "%3dGP %4s  %2dG %2dA %2dP %5.2fPPG %3dPIM", p->games,
-			     pm, goals, assists, goals + assists,
-			     scoreboard_player_get_ppg(p->number), pim);
+			     "%3dGP %4s  %2dG %2dA %2dP %5.2fPPG %3dPIM %3dSOG",
+			     p->games, pm, goals, assists, goals + assists,
+			     scoreboard_player_get_ppg(p->number), pim, sog);
 }
 
 void update_onice_team(onice_widgets &w)
