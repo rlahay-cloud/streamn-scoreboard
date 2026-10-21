@@ -1,5 +1,6 @@
 #include "scoreboard-core.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1352,6 +1353,100 @@ int scoreboard_player_get_season_sog(int number)
 {
 	const struct scoreboard_player *p = roster_lookup(number);
 	return p != NULL ? p->season_sog : 0;
+}
+
+/* ---- import of the Rink Shots totals ---- */
+
+#define SHOT_IMPORT_MAX 128
+
+/* The whole number at the end of a line, when it stands on its own. */
+static bool text_last_int(const char *s, int *value)
+{
+	size_t n = strlen(s);
+	while (n > 0 && isspace((unsigned char)s[n - 1]))
+		n--;
+	const size_t end = n;
+	while (n > 0 && isdigit((unsigned char)s[n - 1]))
+		n--;
+	if (n == end || end - n > 6)
+		return false;
+	if (n > 0 && !isspace((unsigned char)s[n - 1]))
+		return false;
+	*value = atoi(s + n);
+	return true;
+}
+
+bool scoreboard_import_shot_stats(const char *text,
+				  struct scoreboard_shot_import *out)
+{
+	memset(out, 0, sizeof(*out));
+	if (text == NULL)
+		return false;
+	int numbers[SHOT_IMPORT_MAX];
+	int shots[SHOT_IMPORT_MAX];
+	int count = 0;
+	bool recognized = false;
+	bool total_found = false;
+	int total = 0;
+	const char *p = text;
+	while (*p != '\0') {
+		const char *eol = p + strcspn(p, "\r\n");
+		char line[200];
+		size_t len = (size_t)(eol - p);
+		if (len >= sizeof(line))
+			len = sizeof(line) - 1;
+		memcpy(line, p, len);
+		line[len] = '\0';
+		p = eol;
+		while (*p == '\r' || *p == '\n')
+			p++;
+		int value = 0;
+		if (strstr(line, "shots on goal:") != NULL) {
+			if (text_last_int(line, &value)) {
+				total = value;
+				total_found = true;
+				recognized = true;
+			}
+		} else if (strncmp(line, "No player", 9) == 0) {
+			if (text_last_int(line, &value)) {
+				out->no_player = value;
+				recognized = true;
+			}
+		} else if (line[0] == '#' && isdigit((unsigned char)line[1]) &&
+			   text_last_int(line, &value)) {
+			recognized = true;
+			if (count < SHOT_IMPORT_MAX) {
+				numbers[count] = atoi(line + 1);
+				shots[count] = value;
+				count++;
+			}
+		}
+	}
+	if (!recognized)
+		return false;
+
+	for (int k = 0; k < count; k++) {
+		out->player_total += shots[k];
+		if (roster_lookup(numbers[k]) == NULL)
+			out->players_unknown++;
+	}
+	/* Players who are not listed had no shots in the file. */
+	for (int i = 0; i < g_state.home_roster_count; i++) {
+		const int number = g_state.home_roster[i].number;
+		int v = 0;
+		for (int k = 0; k < count; k++) {
+			if (numbers[k] == number) {
+				v = shots[k];
+				out->players_applied++;
+			}
+		}
+		scoreboard_player_set_sog(number, v);
+	}
+	out->file_total = total_found ? total
+					  : out->player_total + out->no_player;
+	out->counter_total = g_state.home_shots;
+	out->difference = out->file_total - out->counter_total;
+	return true;
 }
 
 bool scoreboard_player_set_season(int number, int plus_minus, int goals,

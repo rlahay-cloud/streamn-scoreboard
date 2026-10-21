@@ -2134,6 +2134,74 @@ void open_names_dialog(QWidget *parent)
 			entry.first, entry.second->text().toUtf8().constData());
 }
 
+/* Fill in each player's shots on goal from the totals copied out of the
+   Rink Shots page. The team shot counter is never changed; if the two
+   totals differ, say so. */
+void open_import_shots_dialog(QWidget *parent)
+{
+	QDialog dialog(parent);
+	dialog.setWindowTitle("Import shots from Rink Shots");
+	QVBoxLayout *layout = new QVBoxLayout(&dialog);
+	QLabel *help = new QLabel(
+		"Paste the totals copied from the Rink Shots page, or load the text file you saved from it. Each player's game shots on goal are filled in from it. The team shot counter is not changed.",
+		&dialog);
+	help->setWordWrap(true);
+	layout->addWidget(help);
+	QPlainTextEdit *box = new QPlainTextEdit(&dialog);
+	box->setMinimumSize(420, 220);
+	box->setPlaceholderText("Kings vs Sting, shots on goal: 28\n#10 Van Clemo  5\n...");
+	layout->addWidget(box);
+	QPushButton *load_file = new QPushButton("Load text file...", &dialog);
+	layout->addWidget(load_file);
+	QObject::connect(load_file, &QPushButton::clicked, &dialog, [&]() {
+		const QString path = QFileDialog::getOpenFileName(
+			&dialog, "Open the Rink Shots text file", QString(),
+			"Text files (*.txt);;All files (*)");
+		if (path.isEmpty())
+			return;
+		QFile f(path);
+		if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+			box->setPlainText(QString::fromUtf8(f.readAll()));
+	});
+	QDialogButtonBox *buttons = new QDialogButtonBox(&dialog);
+	QPushButton *import_btn =
+		buttons->addButton("Import", QDialogButtonBox::AcceptRole);
+	buttons->addButton(QDialogButtonBox::Cancel);
+	layout->addWidget(buttons);
+	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
+			 &QDialog::accept);
+	QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
+			 &QDialog::reject);
+	(void)import_btn;
+	if (dialog.exec() != QDialog::Accepted)
+		return;
+
+	struct scoreboard_shot_import r;
+	const QByteArray text = box->toPlainText().toUtf8();
+	if (!scoreboard_import_shot_stats(text.constData(), &r)) {
+		QMessageBox::warning(
+			parent, "Import shots",
+			"I could not find any shots in that text. Copy the totals again from the Rink Shots page (Totals tab, Copy totals) and paste them in. Nothing was changed.");
+		return;
+	}
+	QString msg = QString("Filled in shots on goal for %1 players.")
+				  .arg(r.players_applied);
+	if (r.players_unknown > 0)
+		msg += QString("\n\n%1 jersey numbers in the text are not on your roster and were skipped.")
+			   .arg(r.players_unknown);
+	msg += "\n\n";
+	if (r.difference == 0) {
+		msg += QString("The Rink Shots total (%1) matches the game shot counter (%1).")
+			   .arg(r.file_total);
+	} else {
+		msg += QString("The totals do not match. Rink Shots says %1 shots (%2 for players, %3 for nobody). The game shot counter says %4. Rink Shots is %5 %6. The game shot counter was not changed.")
+			   .arg(r.file_total).arg(r.player_total).arg(r.no_player)
+			   .arg(r.counter_total).arg(qAbs(r.difference))
+			   .arg(r.difference > 0 ? "higher" : "lower");
+	}
+	QMessageBox::information(parent, "Import shots", msg);
+}
+
 void show_roster_menu(QWidget *parent, QWidget *anchor)
 {
 	QMenu menu(parent);
@@ -2143,6 +2211,8 @@ void show_roster_menu(QWidget *parent, QWidget *anchor)
 	QAction *gaa_action = menu.addAction("Goalie GAA game length...");
 	QAction *lineup_action = menu.addAction("Today's lineup...");
 	QAction *lines_action = menu.addAction("Forward lines and defence pairs...");
+	QAction *import_shots_action =
+		menu.addAction("Import shots from Rink Shots...");
 	QAction *save_backup_action = menu.addAction("Save season backup...");
 	QAction *load_backup_action = menu.addAction("Load season backup...");
 	QAction *credit_home_action = menu.addAction(
@@ -2197,6 +2267,8 @@ void show_roster_menu(QWidget *parent, QWidget *anchor)
 			scoreboard_get_gaa_minutes(), 1, 120, 1, &ok);
 		if (ok)
 			scoreboard_set_gaa_minutes(minutes);
+	} else if (chosen == import_shots_action) {
+		open_import_shots_dialog(parent);
 	} else if (chosen == names_action) {
 		open_names_dialog(parent);
 	} else if (chosen == lineup_action) {

@@ -478,6 +478,24 @@ bool scoreboard_player_set_sog(int number, int sog);
 bool scoreboard_player_set_season_sog(int number, int sog);
 int scoreboard_player_get_sog(int number);
 int scoreboard_player_get_season_sog(int number);
+
+/* Fill in each player's game shots on goal from the text copied out of the
+ * Rink Shots page ("#10 Name  5" lines, an optional "No player  N" line and
+ * the "shots on goal: N" total). Players left out of the text get 0. The
+ * team shot counter is never changed: counter_total is what it says now and
+ * difference is the file's total minus the counter. Returns false, changing
+ * nothing, if the text has nothing that can be read. */
+struct scoreboard_shot_import {
+	int players_applied; /* roster players found in the text */
+	int players_unknown; /* numbers in the text that are not on the roster */
+	int player_total;    /* shots given to numbered players in the text */
+	int no_player;       /* shots in the text that belong to nobody */
+	int file_total;      /* the text's total (or players plus nobody) */
+	int counter_total;   /* the game's team shot counter right now */
+	int difference;      /* file_total - counter_total */
+};
+bool scoreboard_import_shot_stats(const char *text,
+				  struct scoreboard_shot_import *out);
 bool scoreboard_player_set_games(int number, int games);
 /* "#12   4 game   18 season" for players with any penalty minutes. */
 void scoreboard_format_pim_lines(char *buf, size_t size);

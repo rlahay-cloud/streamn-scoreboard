@@ -1144,8 +1144,71 @@ static void test_shot_log_text_round_trip(void)
 	assert(buf[0] == '\0');
 }
 
+static void test_import_shot_stats(void)
+{
+	struct scoreboard_shot_import r;
+	setup_roster();
+	scoreboard_home_shot_by(12);
+
+	/* nothing to read, or no text at all, changes nothing */
+	assert(!scoreboard_import_shot_stats(NULL, &r));
+	assert(!scoreboard_import_shot_stats("hello\nworld", &r));
+	assert(!scoreboard_import_shot_stats("#4\n#12 Name3\n#10 Name  1234567\n", &r));
+	assert(!scoreboard_import_shot_stats("Kings, shots on goal: x\nNo player\n", &r));
+	assert(scoreboard_player_get_sog(12) == 1);
+
+	/* a normal copy from the Rink Shots page */
+	scoreboard_increment_home_shots();
+	scoreboard_increment_home_shots();
+	assert(scoreboard_get_home_shots() == 3);
+	assert(scoreboard_import_shot_stats(
+		"Date: 2026-10-20\n"
+		"Kings vs Sting, shots on goal: 9\n"
+		"By period  1: 3  2: 3  3: 3  OT: 0\n"
+		"#10 Van Clemo  4\n"
+		"#11 Louis Drury  3\n"
+		"#99 Not On Team  1\n"
+		"No player  1\n", &r));
+	assert(r.players_applied == 2);
+	assert(r.players_unknown == 1);
+	assert(r.player_total == 8);
+	assert(r.no_player == 1);
+	assert(r.file_total == 9);
+	assert(r.counter_total == 3);
+	assert(r.difference == 6);
+	assert(scoreboard_player_get_sog(10) == 4);
+	assert(scoreboard_player_get_sog(11) == 3);
+	/* players who are not in the text are back to zero */
+	assert(scoreboard_player_get_sog(12) == 0);
+	assert(scoreboard_player_get_season_sog(10) == 4);
+	/* the team counter is never touched */
+	assert(scoreboard_get_home_shots() == 3);
+
+	/* no total line: players plus nobody; windows line endings; counter higher */
+	assert(scoreboard_import_shot_stats("#10 A  1\r\n#12 B  1\r\nNo player  0\r\n", &r));
+	assert(r.file_total == 2 && r.counter_total == 3 && r.difference == -1);
+	assert(scoreboard_player_get_sog(10) == 1 && scoreboard_player_get_sog(11) == 0);
+	assert(scoreboard_get_home_shots() == 3);
+
+	/* matching totals */
+	assert(scoreboard_import_shot_stats("x, shots on goal: 3 \n#10 A  3  ", &r));
+	assert(r.difference == 0);
+
+	/* a very long line is cut, and only the first 128 players are used */
+	char big[4096];
+	size_t len = 0;
+	memset(big, 'a', 300);
+	big[300] = '\n';
+	len = 301;
+	for (int i = 0; i < 130; i++)
+		len += (size_t)snprintf(big + len, sizeof(big) - len, "#%d  1\n", 200 + i);
+	assert(scoreboard_import_shot_stats(big, &r));
+	assert(r.player_total == 128 && r.players_unknown == 128);
+}
+
 int main(void)
 {
+	test_import_shot_stats();
 	test_shot_log_text_round_trip();
 	test_shot_by_player();
 	test_shot_log_is_bounded();
