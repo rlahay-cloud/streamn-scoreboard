@@ -591,6 +591,37 @@ static void play_a_game(void)
 	scoreboard_home_penalty_clear(0);
 }
 
+static void test_summary_lists_goals_and_date(void)
+{
+	char buf[8192];
+	setup();
+	scoreboard_set_home_name("Kings");
+	scoreboard_set_away_name("Rivals");
+	scoreboard_set_goalie_in_net(31);
+	/* 6:45 into period 1 on a counting down 15:00 clock */
+	scoreboard_clock_set_tenths(8 * 60 * 10 + 15 * 10);
+	scoreboard_increment_home_score();
+	scoreboard_credit_goal(10, 11, 12);
+	scoreboard_period_advance();
+	scoreboard_clock_set_tenths(600 * 10);
+	scoreboard_increment_away_score();
+	scoreboard_clock_set_tenths(300 * 10);
+	scoreboard_increment_home_score();
+	scoreboard_credit_goal(11, -1, 12);
+	scoreboard_increment_home_score();
+	scoreboard_credit_goal(12, -1, -1);
+	scoreboard_increment_home_score();
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "\nDate: 20") != NULL);
+	assert(strstr(buf, "\nGOALS\nPeriod 1 6:45 HOME #10 assists #11 #12\n"
+			   "Period 2 5:00 AWAY\n"
+			   "Period 2 10:00 HOME #11 assists #12\n"
+			   "Period 2 10:00 HOME #12\n"
+			   "Period 2 10:00 HOME\n") != NULL);
+	/* goals come before the player lines */
+	assert(strstr(buf, "GOALS") < strstr(buf, "PLAYERS THIS GAME"));
+}
+
 static void test_end_game_counts_games_and_writes_summary(void)
 {
 	char buf[8192];
@@ -1552,6 +1583,7 @@ int main(void)
 	test_away_goal_ends_a_home_minor();
 	test_a_penalty_that_ends_second_part_after_compound_tick();
 	test_points_per_game();
+	test_summary_lists_goals_and_date();
 	test_end_game_counts_games_and_writes_summary();
 	test_end_game_without_output_directory();
 	test_goalie_who_only_faced_shots_counts_as_played();

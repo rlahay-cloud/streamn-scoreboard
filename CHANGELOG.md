@@ -21,6 +21,7 @@ All notable changes to Streamn Scoreboard will be documented in this file.
 - **End Game** button: pick who played, then a summary of all the important numbers is written to `game_summary.txt` (plus a dated copy).
 - **Reopen Last Game** button to fix mistakes after End Game or after New Game.
 - **End Game goal review:** before the game ends, a window lists every goal with who scored, who assisted and who was on the ice (home and away goals). Press Edit on any goal to fix it. Up to the last 16 goals of the game are kept; if the score was typed in by hand, the window says some goals could not be checked.
+- The **game summary** now has a `Date:` line and a **GOALS** section listing every goal in order with the period, the time into the period, which team scored and, for home goals, who scored and who assisted. The Kings HUDL stats site reads this. Up to the last 16 goals of the game are listed.
 - The **game summary** now lists players in jersey number order, lowest first, in both the game and season sections, and adds a "Did not play" line naming anyone who sat that game.
 - Goalie **time on ice (TOI)**, counted while the game clock runs and the goalie is in net, for the game and the season.
 - The Season view shows **games played (GP)** for skaters and goalies.

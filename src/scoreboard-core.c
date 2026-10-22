@@ -33,6 +33,8 @@ struct pm_event {
 	bool skipped; /* no +/- because a penalty was active */
 	int count;   /* home players who got +1 (home goal) or -1 (away goal) */
 	int goalie;  /* goalie in net for an away goal (-1 none) */
+	int period;  /* period number the goal was scored in */
+	int elapsed_tenths; /* time into that period when it was scored */
 	int numbers[SCOREBOARD_MAX_ROSTER];
 };
 
@@ -537,6 +539,7 @@ void scoreboard_reset_state_for_tests(void)
 static void pm_record_goal(bool home_scored);
 static void pm_undo_goal(bool home_scored);
 static void pm_forget_goals(bool home_scored);
+static int current_period_elapsed_tenths(void);
 
 static int roster_index(int number)
 {
@@ -1963,6 +1966,8 @@ static void pm_record_goal(bool home_scored)
 	ev.assist2 = -1;
 	ev.skipped = g_state.pm_skip_power_play && pm_penalty_active();
 	ev.goalie = -1;
+	ev.period = g_state.period;
+	ev.elapsed_tenths = current_period_elapsed_tenths();
 	if (!home_scored)
 		ev.goalie = goalie_add_goal_against();
 	pm_push_event(&ev);
@@ -2374,6 +2379,37 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 	snprintf(line, sizeof(line), "Faceoffs won (%s): %s",
 		 g_state.home_name, tmp);
 	append_line(buf, size, &len, line);
+	time_t now = time(NULL);
+	struct tm *local = localtime(&now);
+	if (local != NULL && strftime(tmp, sizeof(tmp), "Date: %Y-%m-%d", local) > 0)
+		append_line(buf, size, &len, tmp);
+
+	/* Every goal still remembered, oldest first, with who scored it. */
+	append_line(buf, size, &len, "");
+	append_line(buf, size, &len, "GOALS");
+	for (int i = 0; i < g_state.pm_event_count; i++) {
+		const struct pm_event *ev = &g_state.pm_events[i];
+		const int idx = ev->period - 1;
+		const int secs = ev->elapsed_tenths / 10;
+		char who[64];
+		who[0] = '\0';
+		if (ev->home_scored && ev->scorer >= 0) {
+			size_t w = (size_t)snprintf(who, sizeof(who), " #%d", ev->scorer);
+			if (ev->assist1 >= 0 || ev->assist2 >= 0)
+				w += (size_t)snprintf(who + w, sizeof(who) - w, " assists");
+			if (ev->assist1 >= 0)
+				w += (size_t)snprintf(who + w, sizeof(who) - w, " #%d", ev->assist1);
+			if (ev->assist2 >= 0)
+				snprintf(who + w, sizeof(who) - w, " #%d", ev->assist2);
+		}
+		snprintf(line, sizeof(line), "Period %s %d:%02d %s%s",
+			 (idx >= 0 && idx < g_state.period_label_count)
+				 ? g_state.period_labels[idx]
+				 : "?",
+			 secs / 60, secs % 60, ev->home_scored ? "HOME" : "AWAY",
+			 who);
+		append_line(buf, size, &len, line);
+	}
 
 	append_line(buf, size, &len, "");
 	append_line(buf, size, &len, "PLAYERS THIS GAME");
