@@ -258,10 +258,10 @@ static void test_save_percentage_and_goalie_text(void)
 	scoreboard_goalie_set_goals_against(31, 2);
 	scoreboard_goalie_set_season(31, 100, 10, 4);
 	scoreboard_format_goalie_in_net(buf, sizeof(buf));
-	assert(strcmp(buf, "#31  SA  25  GA  2  SV% .920  TOI 0:00") == 0);
+	assert(strcmp(buf, "#31  SA  25  GA  2  SV% .920  GAA -  TOI 0:00") == 0);
 	scoreboard_format_goalie_lines(false, buf, sizeof(buf));
-	assert(strcmp(buf, "#31  SA  25  GA  2  SV% .920  TOI 0:00\n"
-			   "#35  SA   0  GA  0  SV% -  TOI 0:00") == 0);
+	assert(strcmp(buf, "#31  SA  25  GA  2  SV% .920  GAA -  TOI 0:00\n"
+			   "#35  SA   0  GA  0  SV% -  GAA -  TOI 0:00") == 0);
 	scoreboard_format_goalie_lines(true, buf, sizeof(buf));
 	assert(strncmp(buf, "#31  SA 100  GA 10  SV% .900", 28) == 0);
 	char small[20];
@@ -591,6 +591,37 @@ static void play_a_game(void)
 	scoreboard_home_penalty_clear(0);
 }
 
+static void test_summary_lists_goals_and_date(void)
+{
+	char buf[8192];
+	setup();
+	scoreboard_set_home_name("Kings");
+	scoreboard_set_away_name("Rivals");
+	scoreboard_set_goalie_in_net(31);
+	/* 6:45 into period 1 on a counting down 15:00 clock */
+	scoreboard_clock_set_tenths(8 * 60 * 10 + 15 * 10);
+	scoreboard_increment_home_score();
+	scoreboard_credit_goal(10, 11, 12);
+	scoreboard_period_advance();
+	scoreboard_clock_set_tenths(600 * 10);
+	scoreboard_increment_away_score();
+	scoreboard_clock_set_tenths(300 * 10);
+	scoreboard_increment_home_score();
+	scoreboard_credit_goal(11, -1, 12);
+	scoreboard_increment_home_score();
+	scoreboard_credit_goal(12, -1, -1);
+	scoreboard_increment_home_score();
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "\nDate: 20") != NULL);
+	assert(strstr(buf, "\nGOALS\nPeriod 1 6:45 HOME #10 assists #11 #12\n"
+			   "Period 2 5:00 AWAY\n"
+			   "Period 2 10:00 HOME #11 assists #12\n"
+			   "Period 2 10:00 HOME #12\n"
+			   "Period 2 10:00 HOME\n") != NULL);
+	/* goals come before the player lines */
+	assert(strstr(buf, "GOALS") < strstr(buf, "PLAYERS THIS GAME"));
+}
+
 static void test_end_game_counts_games_and_writes_summary(void)
 {
 	char buf[8192];
@@ -768,12 +799,12 @@ static void test_new_files_are_written(void)
 	expect_file("home_pim.txt", "#10    4 game    4 season\n#12    2 game    2 season");
 	expect_file("home_ppg.txt", "#10   0.00\n#11   0.00\n#12   0.00");
 	expect_file("home_faceoff_percent.txt", "1/2 (50%)");
-	expect_file("home_goalie.txt", "#31  SA   5  GA  1  SV% .800  TOI 0:00");
-	expect_file("home_goalies.txt", "#31  SA   5  GA  1  SV% .800  TOI 0:00\n"
-					"#35  SA   0  GA  0  SV% -  TOI 0:00");
+	expect_file("home_goalie.txt", "#31  SA   5  GA  1  SV% .800  GAA -  TOI 0:00");
+	expect_file("home_goalies.txt", "#31  SA   5  GA  1  SV% .800  GAA -  TOI 0:00\n"
+					"#35  SA   0  GA  0  SV% -  GAA -  TOI 0:00");
 	expect_file("home_goalies_season.txt",
-		    "#31  SA   5  GA  1  SV% .800  TOI 0:00\n"
-		    "#35  SA   0  GA  0  SV% -  TOI 0:00");
+		    "#31  SA   5  GA  1  SV% .800  GAA -  TOI 0:00\n"
+		    "#35  SA   0  GA  0  SV% -  GAA -  TOI 0:00");
 	cleanup_tmp_dir();
 }
 
@@ -1064,7 +1095,9 @@ static void test_todays_lineup(void)
 	char *season_part = strstr(summary, "SEASON TO DATE");
 	assert(season_part != NULL);
 	*season_part = '\0';
-	assert(strstr(summary, "#10") != NULL && strstr(summary, "#12") == NULL);
+	/* #12 sat: no player row, only the "Did not play" line. */
+	assert(strstr(summary, "#10") != NULL && strstr(summary, "#12  ") == NULL);
+	assert(strstr(summary, "Did not play: #12") != NULL);
 	const int played[2] = {10, 11};
 	scoreboard_end_game(played, 2);
 	assert(player(10)->games == 1 && player(11)->games == 1);
@@ -1272,6 +1305,270 @@ static void test_reopen_memory_with_nothing_to_reopen(void)
 	assert(!scoreboard_can_reopen_last_game());
 }
 
+/* ---- goals against average ---- */
+
+static void test_goals_against_average(void)
+{
+	char buf[32];
+	char tiny[1] = {'x'};
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_get_gaa_minutes() == 32);
+	scoreboard_format_gaa(2, 0, buf, sizeof(buf));
+	assert(strcmp(buf, "-") == 0);
+	scoreboard_format_gaa(2, -5, buf, sizeof(buf));
+	assert(strcmp(buf, "-") == 0);
+	/* 2 goals in 16 minutes of a 32 minute game = 4.00 */
+	scoreboard_format_gaa(2, 9600, buf, sizeof(buf));
+	assert(strcmp(buf, "4.00") == 0);
+	scoreboard_format_gaa(0, 9600, buf, sizeof(buf));
+	assert(strcmp(buf, "0.00") == 0);
+	scoreboard_format_gaa(1, 19200, buf, sizeof(buf));
+	assert(strcmp(buf, "1.00") == 0);
+	scoreboard_format_gaa(1, 19200, tiny, 0);
+	assert(tiny[0] == 'x');
+
+	/* the game length is a setting */
+	scoreboard_set_gaa_minutes(60);
+	assert(scoreboard_get_gaa_minutes() == 60);
+	scoreboard_format_gaa(2, 12000, buf, sizeof(buf));
+	assert(strcmp(buf, "6.00") == 0);
+	scoreboard_set_gaa_minutes(0);
+	assert(scoreboard_get_gaa_minutes() == 1);
+	scoreboard_set_gaa_minutes(500);
+	assert(scoreboard_get_gaa_minutes() == 120);
+	scoreboard_set_gaa_minutes(32);
+
+	setup();
+	scoreboard_goalie_set_goals_against(31, 2);
+	scoreboard_goalie_set_toi_seconds(31, 960);
+	scoreboard_set_goalie_in_net(31);
+	char line[128];
+	scoreboard_format_goalie_in_net(line, sizeof(line));
+	assert(strstr(line, "GAA 4.00") != NULL);
+
+	/* kept in the saved state and the backup file */
+	setup_tmp_dir();
+	char path[512];
+	scoreboard_set_gaa_minutes(45);
+	snprintf(path, sizeof(path), "%s/state.json", g_tmp_dir);
+	assert(scoreboard_save_state(path));
+	scoreboard_set_gaa_minutes(20);
+	assert(scoreboard_load_state(path));
+	assert(scoreboard_get_gaa_minutes() == 45);
+	snprintf(path, sizeof(path), "%s/backup.txt", g_tmp_dir);
+	assert(scoreboard_export_backup(path));
+	scoreboard_set_gaa_minutes(20);
+	assert(scoreboard_import_backup(path));
+	assert(scoreboard_get_gaa_minutes() == 45);
+	/* an older state file, or a silly number, falls back to the default */
+	snprintf(path, sizeof(path), "%s/old.json", g_tmp_dir);
+	FILE *f = fopen(path, "w");
+	fprintf(f, "{\n  \"goalie_count\": 0,\n  \"gaa_minutes\": 999\n}\n");
+	fclose(f);
+	assert(scoreboard_load_state(path));
+	assert(scoreboard_get_gaa_minutes() == 32);
+	cleanup_tmp_dir();
+}
+
+/* ---- names and one file per player ---- */
+
+static void test_names(void)
+{
+	char buf[512];
+	setup();
+	assert(strcmp(scoreboard_player_get_name(10), "") == 0);
+	assert(!scoreboard_player_set_name(99, "Nobody"));
+	assert(strcmp(scoreboard_player_get_name(99), "") == 0);
+	assert(scoreboard_player_set_name(10, "  Jane Smith "));
+	assert(strcmp(scoreboard_player_get_name(10), "Jane Smith") == 0);
+	/* separators and control characters are not allowed */
+	assert(scoreboard_player_set_name(11, "A:b,c;d|e=f\"g\\h\ni"));
+	assert(strcmp(scoreboard_player_get_name(11), "A b c d e f g h i") == 0);
+	assert(scoreboard_player_set_name(12, NULL));
+	assert(strcmp(scoreboard_player_get_name(12), "") == 0);
+	assert(scoreboard_player_set_name(12, "   "));
+	assert(strcmp(scoreboard_player_get_name(12), "") == 0);
+
+	/* long names are cut, never in the middle of a character */
+	scoreboard_player_set_name(12, "0123456789012345678901234567890123456789");
+	assert(strlen(scoreboard_player_get_name(12)) == 31);
+	scoreboard_player_set_name(12, "012345678901234567890123456789\xC3\xA9");
+	assert(strlen(scoreboard_player_get_name(12)) == 30);
+	scoreboard_player_set_name(12, "01234567890123456789012345678\xE2\x82\xAC");
+	assert(strlen(scoreboard_player_get_name(12)) == 29);
+	scoreboard_player_set_name(12, "0123456789012345678901234567\xF0\x9F\x8F\x92");
+	assert(strlen(scoreboard_player_get_name(12)) == 28);
+	scoreboard_player_set_name(12, "012345678901234567890123456\xC3\xA9\xC3\xA9");
+	assert(strlen(scoreboard_player_get_name(12)) == 31);
+	scoreboard_player_set_name(12, "\xC3\xA9");
+	assert(strcmp(scoreboard_player_get_name(12), "\xC3\xA9") == 0);
+
+	assert(!scoreboard_goalie_set_name(99, "Nobody"));
+	assert(strcmp(scoreboard_goalie_get_name(99), "") == 0);
+	assert(scoreboard_goalie_set_name(31, "Sam Wall"));
+	assert(strcmp(scoreboard_goalie_get_name(31), "Sam Wall") == 0);
+	assert(scoreboard_goalie_set_name(35, NULL));
+
+	/* saved in the text forms */
+	scoreboard_player_set_name(12, "Zoe");
+	scoreboard_roster_to_string(buf, sizeof(buf));
+	assert(strstr(buf, "=Jane Smith,") != NULL && strstr(buf, "=Zoe") != NULL);
+	char goalies[256];
+	scoreboard_goalies_to_string(goalies, sizeof(goalies));
+	assert(strstr(goalies, "=Sam Wall,") != NULL);
+	scoreboard_roster_clear();
+	scoreboard_goalie_clear();
+	scoreboard_roster_from_string(buf);
+	scoreboard_goalies_from_string(goalies);
+	assert(strcmp(scoreboard_player_get_name(10), "Jane Smith") == 0);
+	assert(strcmp(scoreboard_player_get_name(12), "Zoe") == 0);
+	assert(strcmp(scoreboard_goalie_get_name(31), "Sam Wall") == 0);
+	assert(strcmp(scoreboard_goalie_get_name(35), "") == 0);
+	assert(scoreboard_get_goalie_in_net() == -1);
+	/* a name on the last entry, and an entry with only a name */
+	scoreboard_roster_from_string("7:0:0:1:0:0:0:0=Max,8=Lee");
+	assert(strcmp(scoreboard_player_get_name(7), "Max") == 0);
+	assert(strcmp(scoreboard_player_get_name(8), "Lee") == 0);
+	scoreboard_goalies_from_string("31:1:0:0:0:0:0:0:0=Ann;31");
+	assert(strcmp(scoreboard_goalie_get_name(31), "Ann") == 0);
+	assert(scoreboard_get_goalie_in_net() == 31);
+
+	/* names survive the saved state and the backup file */
+	setup();
+	scoreboard_player_set_name(10, "Jane Smith");
+	scoreboard_goalie_set_name(31, "Sam Wall");
+	setup_tmp_dir();
+	char path[512];
+	snprintf(path, sizeof(path), "%s/state.json", g_tmp_dir);
+	assert(scoreboard_save_state(path));
+	scoreboard_player_set_name(10, "Changed");
+	scoreboard_goalie_set_name(31, "Changed");
+	assert(scoreboard_load_state(path));
+	assert(strcmp(scoreboard_player_get_name(10), "Jane Smith") == 0);
+	assert(strcmp(scoreboard_goalie_get_name(31), "Sam Wall") == 0);
+	snprintf(path, sizeof(path), "%s/backup.txt", g_tmp_dir);
+	assert(scoreboard_export_backup(path));
+	scoreboard_reset_state_for_tests();
+	assert(scoreboard_import_backup(path));
+	assert(strcmp(scoreboard_player_get_name(10), "Jane Smith") == 0);
+	cleanup_tmp_dir();
+}
+
+static void test_player_and_goalie_files(void)
+{
+	char buf[512];
+	setup();
+	assert(!scoreboard_format_player_file(99, buf, sizeof(buf)));
+	assert(buf[0] == '\0');
+	assert(!scoreboard_format_goalie_file(99, buf, sizeof(buf)));
+	assert(!scoreboard_format_player_file(10, buf, 0));
+	assert(!scoreboard_format_goalie_file(31, buf, 0));
+
+	assert(scoreboard_format_player_file(10, buf, sizeof(buf)));
+	assert(strcmp(buf, "#10\n"
+			   "Game: 0 +/- | 0G 0A 0P | 0 PIM | 0 SOG\n"
+			   "Season: 0 GP | 0 +/- | 0G 0A 0P | 0.00 PPG | 0 PIM | 0 SOG\n") == 0);
+
+	scoreboard_player_set_name(10, "Jane Smith");
+	scoreboard_player_set_goals(10, 2);
+	scoreboard_player_set_assists(10, 1);
+	scoreboard_player_set_plus_minus(10, 2);
+	scoreboard_player_set_pim(10, 4);
+	scoreboard_player_set_season(10, 5, 6, 7);
+	assert(scoreboard_format_player_file(10, buf, sizeof(buf)));
+	assert(strncmp(buf, "#10 Jane Smith\n", 15) == 0);
+	assert(strstr(buf, "Game: +2 +/- | 2G 1A 3P | 4 PIM | 0 SOG\n") != NULL);
+	assert(strstr(buf, "Season: 0 GP | +5 +/- | 6G 7A 13P | 0.00 PPG | 4 PIM | 0 SOG\n") != NULL);
+
+	scoreboard_goalie_set_name(31, "Sam Wall");
+	scoreboard_goalie_set_shots_against(31, 10);
+	scoreboard_goalie_set_goals_against(31, 2);
+	scoreboard_goalie_set_toi_seconds(31, 1200);
+	assert(scoreboard_format_goalie_file(31, buf, sizeof(buf)));
+	assert(strcmp(buf, "#31 Sam Wall\n"
+			   "Game: SA 10 | GA 2 | SV% .800 | GAA 3.20 | TOI 20:00\n"
+			   "Season: 0 GP | SA 10 | GA 2 | SV% .800 | GAA 3.20 | TOI 20:00\n") == 0);
+	assert(scoreboard_format_goalie_file(35, buf, sizeof(buf)));
+	assert(strstr(buf, "SV% - | GAA - | TOI 0:00\n") != NULL);
+
+	/* the files are written next to the others */
+	setup_tmp_dir();
+	scoreboard_set_output_directory(g_tmp_dir);
+	assert(scoreboard_write_all_files());
+	expect_file("player_11.txt",
+		    "#11\nGame: 0 +/- | 0G 0A 0P | 0 PIM | 0 SOG\n"
+		    "Season: 0 GP | 0 +/- | 0G 0A 0P | 0.00 PPG | 0 PIM | 0 SOG\n");
+	char path[512];
+	snprintf(path, sizeof(path), "%s/player_10.txt", g_tmp_dir);
+	char *content = read_file_content(path);
+	assert(content != NULL && strncmp(content, "#10 Jane Smith", 14) == 0);
+	free(content);
+	snprintf(path, sizeof(path), "%s/goalie_31.txt", g_tmp_dir);
+	content = read_file_content(path);
+	assert(content != NULL && strstr(content, "GAA 3.20") != NULL);
+	free(content);
+	snprintf(path, sizeof(path), "%s/goalie_35.txt", g_tmp_dir);
+	content = read_file_content(path);
+	assert(content != NULL);
+	free(content);
+	cleanup_tmp_dir();
+}
+
+/* The game summary lists players by jersey number, lowest first, in both the
+   game and the season sections, even though the roster keeps the order the
+   players were added in. */
+static void test_summary_sorted_by_number(void)
+{
+	scoreboard_reset_state_for_tests();
+	scoreboard_roster_add(17);
+	scoreboard_roster_add(4);
+	scoreboard_roster_add(9);
+	scoreboard_roster_add(12);
+	scoreboard_player_set_dressed(9, false); /* sat this game */
+	const int played[] = {17, 4, 12};
+	assert(scoreboard_end_game(played, 3));
+	char buf[4096];
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	const char *game = strstr(buf, "PLAYERS THIS GAME");
+	const char *season = strstr(buf, "SEASON TO DATE");
+	assert(game != NULL && season != NULL && game < season);
+	const char *p4 = strstr(game, "#4 ");
+	const char *p12 = strstr(game, "#12 ");
+	const char *p17 = strstr(game, "#17 ");
+	assert(p4 && p12 && p17 && p4 < p12 && p12 < p17);
+	/* The player who sat is left out of the list and named on its own line. */
+	const char *dnp = strstr(game, "Did not play: #9\n");
+	assert(dnp != NULL && dnp < season);
+	assert(dnp > p17);
+	const char *row9 = strstr(game, "#9  ");
+	assert(row9 == NULL || row9 > season); /* a row only in the season part */
+	const char *s4 = strstr(season, "#4 ");
+	const char *s9 = strstr(season, "#9 ");
+	const char *s12 = strstr(season, "#12 ");
+	const char *s17 = strstr(season, "#17 ");
+	assert(s4 && s9 && s12 && s17);
+	assert(s4 < s9 && s9 < s12 && s12 < s17);
+
+	/* Several players sat: one line, lowest number first. */
+	scoreboard_reset_state_for_tests();
+	scoreboard_roster_add(30);
+	scoreboard_roster_add(5);
+	scoreboard_roster_add(8);
+	scoreboard_player_set_dressed(30, false);
+	scoreboard_player_set_dressed(8, false);
+	const int only5[] = {5};
+	assert(scoreboard_end_game(only5, 1));
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "Did not play: #8 #30\n") != NULL);
+
+	/* Nobody sat: no such line. */
+	scoreboard_reset_state_for_tests();
+	scoreboard_roster_add(5);
+	assert(scoreboard_end_game(only5, 1));
+	scoreboard_format_game_summary(buf, sizeof(buf));
+	assert(strstr(buf, "Did not play") == NULL);
+}
+
 int main(void)
 {
 	test_goalie_roster();
@@ -1286,6 +1583,7 @@ int main(void)
 	test_away_goal_ends_a_home_minor();
 	test_a_penalty_that_ends_second_part_after_compound_tick();
 	test_points_per_game();
+	test_summary_lists_goals_and_date();
 	test_end_game_counts_games_and_writes_summary();
 	test_end_game_without_output_directory();
 	test_goalie_who_only_faced_shots_counts_as_played();
@@ -1304,6 +1602,10 @@ int main(void)
 	test_end_game_writes_a_backup();
 	test_reopen_memory_round_trip();
 	test_reopen_memory_with_nothing_to_reopen();
+	test_goals_against_average();
+	test_names();
+	test_player_and_goalie_files();
+	test_summary_sorted_by_number();
 	printf("scoreboard-core goalie tests passed\n");
 	return 0;
 }

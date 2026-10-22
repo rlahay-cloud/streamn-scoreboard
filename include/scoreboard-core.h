@@ -287,6 +287,7 @@ void scoreboard_preview_strength_label(const char *fmt, char *buf,
 #define SCOREBOARD_MAX_ON_ICE 5
 #define SCOREBOARD_MAX_GOALIES 4
 
+#define SCOREBOARD_NAME_LEN 32
 struct scoreboard_player {
 	int number;
 	int plus_minus;
@@ -298,7 +299,10 @@ struct scoreboard_player {
 	int pim;        /* penalty minutes this game */
 	int season_pim;
 	int games;      /* games finished with End Game that this player was in */
+	int sog;        /* shots on goal this game (see scoreboard_home_shot_by) */
+	int season_sog;
 	bool out;       /* not in today's lineup (see scoreboard_player_set_dressed) */
+	char name[SCOREBOARD_NAME_LEN]; /* optional, "" when not given */
 };
 
 /* Returns the roster slot, or -1 if the number is out of range or the roster
@@ -351,6 +355,31 @@ bool scoreboard_credit_goal(int scorer, int assist1, int assist2);
  * is called for a goal, nobody gets plus/minus for it. */
 bool scoreboard_set_goal_on_ice(bool home_scored, const int *numbers,
 				int count);
+/* The goals of this game still in the history (up to 16, oldest first, home
+ * and away mixed). The End Game review uses these to check every goal.
+ * Typing a score in directly forgets that team's earlier goals. */
+struct scoreboard_goal_event {
+	bool home_scored;
+	int scorer;   /* jersey numbers, -1 for nobody (home goals only) */
+	int assist1;
+	int assist2;
+	bool skipped; /* a penalty was active, so no +/- */
+	int on_ice_count;
+	int on_ice[SCOREBOARD_MAX_ON_ICE];
+};
+int scoreboard_goal_event_count(void);
+/* False if index is out of range. */
+bool scoreboard_goal_event_get(int index, struct scoreboard_goal_event *out);
+/* Replace who scored and assisted for one home goal. False, changing
+ * nothing, for an away goal, a bad index, a number not on the roster or a
+ * player named twice. */
+bool scoreboard_goal_event_set_credit(int index, int scorer, int assist1,
+				      int assist2);
+/* Replace who was on the ice for one goal (either team). False if index is
+ * out of range. Plus/minus moves with the answer, as for
+ * scoreboard_set_goal_on_ice. */
+bool scoreboard_goal_event_set_on_ice(int index, const int *numbers,
+				      int count);
 /* Copies the numbers last given for that goal into `numbers` (at most `max`)
  * and returns how many; 0 if none or no such goal. */
 int scoreboard_get_goal_on_ice(bool home_scored, int *numbers, int max);
@@ -433,6 +462,40 @@ bool scoreboard_import_backup(const char *path);
 bool scoreboard_player_set_pim(int number, int pim);
 int scoreboard_player_get_pim(int number);
 bool scoreboard_player_set_season_pim(int number, int pim);
+
+/* Shots on goal for a home player. scoreboard_home_shot_by() adds a team shot
+ * and a shot on goal for that jersey number (false if not on the roster).
+ * Taking a shot away with scoreboard_decrement_home_shots() removes it from
+ * the player it was given to, using a memory of the last
+ * SCOREBOARD_SHOT_LOG_CAPACITY shots. A goal counts as a shot for whoever is
+ * credited as the scorer. Game edits move the season value. */
+bool scoreboard_home_shot_by(int number);
+/* The memory of whom recent shots went to, as text, so it can be kept across
+ * restarts. from_string replaces the memory; bad text is ignored. */
+void scoreboard_shot_log_to_string(char *buf, size_t size);
+void scoreboard_shot_log_from_string(const char *text);
+bool scoreboard_player_set_sog(int number, int sog);
+bool scoreboard_player_set_season_sog(int number, int sog);
+int scoreboard_player_get_sog(int number);
+int scoreboard_player_get_season_sog(int number);
+
+/* Fill in each player's game shots on goal from the text copied out of the
+ * Rink Shots page ("#10 Name  5" lines, an optional "No player  N" line and
+ * the "shots on goal: N" total). Players left out of the text get 0. The
+ * team shot counter is never changed: counter_total is what it says now and
+ * difference is the file's total minus the counter. Returns false, changing
+ * nothing, if the text has nothing that can be read. */
+struct scoreboard_shot_import {
+	int players_applied; /* roster players found in the text */
+	int players_unknown; /* numbers in the text that are not on the roster */
+	int player_total;    /* shots given to numbered players in the text */
+	int no_player;       /* shots in the text that belong to nobody */
+	int file_total;      /* the text's total (or players plus nobody) */
+	int counter_total;   /* the game's team shot counter right now */
+	int difference;      /* file_total - counter_total */
+};
+bool scoreboard_import_shot_stats(const char *text,
+				  struct scoreboard_shot_import *out);
 bool scoreboard_player_set_games(int number, int games);
 /* "#12   4 game   18 season" for players with any penalty minutes. */
 void scoreboard_format_pim_lines(char *buf, size_t size);
@@ -465,7 +528,30 @@ struct scoreboard_goalie {
 	int toi_tenths;        /* time on ice (in net) this game, tenths of a second */
 	int season_toi_tenths;
 	bool played; /* was in net this game */
+	char name[SCOREBOARD_NAME_LEN]; /* optional, "" when not given */
 };
+
+/* ---- names and one stat file per player ---- */
+
+/* Names are optional (up to 31 bytes). Characters the saved text forms use
+ * as separators are turned into spaces. Returns false for a number that is
+ * not on the roster (or goalie list). The getters return "" when there is no
+ * name. Each player and goalie also gets their own text file, player_<n>.txt
+ * and goalie_<n>.txt, with a name line, a Game line and a Season line. */
+bool scoreboard_player_set_name(int number, const char *name);
+const char *scoreboard_player_get_name(int number);
+bool scoreboard_goalie_set_name(int number, const char *name);
+const char *scoreboard_goalie_get_name(int number);
+bool scoreboard_format_player_file(int number, char *buf, size_t size);
+bool scoreboard_format_goalie_file(int number, char *buf, size_t size);
+/* Goals against average: goals per game length in net ("-" before any
+ * time). The game length is a setting in minutes (1 to 120, default 32, the
+ * length of a game in this league; pro hockey uses 60). */
+#define SCOREBOARD_DEFAULT_GAA_MINUTES 32
+void scoreboard_set_gaa_minutes(int minutes);
+int scoreboard_get_gaa_minutes(void);
+void scoreboard_format_gaa(int goals_against, int toi_tenths, char *buf,
+			   size_t size);
 
 int scoreboard_goalie_add(int number);
 bool scoreboard_goalie_remove(int number);
