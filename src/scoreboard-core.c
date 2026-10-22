@@ -2390,7 +2390,9 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 	for (int i = 0; i < g_state.pm_event_count; i++) {
 		const struct pm_event *ev = &g_state.pm_events[i];
 		const int idx = ev->period - 1;
-		const int secs = ev->elapsed_tenths / 10;
+		const int secs = ev->elapsed_tenths > 0 ? ev->elapsed_tenths / 10 : 0;
+		char num[16];
+		snprintf(num, sizeof(num), "%d", ev->period);
 		char who[64];
 		who[0] = '\0';
 		if (ev->home_scored && ev->scorer >= 0) {
@@ -2405,7 +2407,7 @@ void scoreboard_format_game_summary(char *buf, size_t size)
 		snprintf(line, sizeof(line), "Period %s %d:%02d %s%s",
 			 (idx >= 0 && idx < g_state.period_label_count)
 				 ? g_state.period_labels[idx]
-				 : "?",
+				 : num,
 			 secs / 60, secs % 60, ev->home_scored ? "HOME" : "AWAY",
 			 who);
 		append_line(buf, size, &len, line);
